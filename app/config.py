@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     # Paramètres serveur
     DEBUG: bool = Field(False, env="DEBUG")
     
+    # Variables supplémentaires trouvées dans le fichier .env
+    ADMIN_SECRET: Optional[str] = Field(None, env="ADMIN_SECRET")
+    CACHE_ENABLED: bool = Field(False, env="CACHE_ENABLED")
+    METRICS_ENABLED: bool = Field(False, env="METRICS_ENABLED")
+    
+    # Validateur pour ALLOWED_HOSTS pour supporter le format avec virgules
+    @classmethod
+    def validate_allowed_hosts(cls, v):
+        if isinstance(v, str):
+            return [host.strip() for host in v.split(',')]
+        return v
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

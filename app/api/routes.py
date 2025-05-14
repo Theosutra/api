@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 # Créer le routeur d'API
 router = APIRouter(
-    prefix="/api/v1",
     tags=["nl2sql"],
     dependencies=[Depends(get_api_key)]
 )
