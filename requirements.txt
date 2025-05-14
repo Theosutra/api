@@ -1,0 +1,29 @@
+# FastAPI et dépendances
+fastapi>=0.100.0
+uvicorn>=0.22.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+starlette>=0.27.0
+aiofiles>=23.1.0
+
+# Pour l'authentification et la sécurité
+python-multipart>=0.0.6
+PyJWT>=2.6.0
+
+# Pour les embeddings
+sentence-transformers>=2.2.2
+torch>=2.0.0
+
+# Pour la recherche vectorielle
+pinecone-client>=3.0.0
+
+# Pour les requêtes HTTP asynchrones
+aiohttp>=3.8.4
+
+# Pour la journalisation et le débogage
+loguru>=0.7.0
+
+# Dépendances optionnelles
+pytest>=7.3.1        # Pour les tests
+pytest-asyncio>=0.21.0  # Pour les tests asynchrones
+httpx>=0.24.1        # Pour les tests d'intégration
