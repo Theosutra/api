@@ -1,3 +1,4 @@
+# app/api/models.py (mise à jour)
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any
 import re
@@ -18,9 +19,11 @@ class SQLTranslationRequest(BaseModel):
         None, 
         description="Chemin vers le fichier de schéma SQL (optionnel)"
     )
-    validate: bool = Field(
+    # Renommé 'validate' en 'should_validate' pour éviter le conflit avec la méthode de BaseModel
+    should_validate: bool = Field(
         True, 
-        description="Valider la requête SQL générée"
+        description="Valider la requête SQL générée",
+        alias="validate"  # Permet aux clients API d'utiliser toujours 'validate'
     )
     explain: bool = Field(
         True, 
@@ -70,6 +73,8 @@ class SQLTranslationRequest(BaseModel):
                 "explain": True
             }
         }
+        # Permet d'utiliser 'validate' dans la requête JSON tout en évitant le conflit
+        populate_by_name = True
 
 
 class SQLTranslationResponse(BaseModel):
@@ -103,7 +108,7 @@ class SQLTranslationResponse(BaseModel):
     )
     status: str = Field(
         ..., 
-        description="Statut de la traduction (success ou error)"
+        description="Statut de la traduction (success, warning ou error)"
     )
     processing_time: Optional[float] = Field(
         None,
@@ -149,7 +154,8 @@ class HealthCheckResponse(BaseModel):
                 "services": {
                     "pinecone": {"status": "ok"},
                     "openai": {"status": "ok"},
-                    "embedding": {"status": "ok"}
+                    "embedding": {"status": "ok"},
+                    "redis": {"status": "ok"}
                 }
             }
         }

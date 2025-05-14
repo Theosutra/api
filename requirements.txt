@@ -5,6 +5,8 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 starlette>=0.27.0
 aiofiles>=23.1.0
+sqlglot>=11.5.0
+redis>=4.5.5
 
 # Pour l'authentification et la sécurité
 python-multipart>=0.0.6
@@ -27,3 +29,10 @@ loguru>=0.7.0
 pytest>=7.3.1        # Pour les tests
 pytest-asyncio>=0.21.0  # Pour les tests asynchrones
 httpx>=0.24.1        # Pour les tests d'intégration
+
+# Ajout dans requirements.txt
+pytest>=7.3.1
+pytest-asyncio>=0.21.0
+httpx>=0.24.1
+pytest-cov>=4.1.0
+mock>=5.0.0

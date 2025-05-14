@@ -1,3 +1,4 @@
+# app/core/llm.py
 import asyncio
 import aiohttp
 import logging
@@ -27,10 +28,8 @@ async def generate_sql(
         temperature: La température pour la génération (par défaut, celle de la configuration)
         
     Returns:
-        La requête SQL générée, ou None si la génération a échoué ou retourné "IMPOSSIBLE"
-        
-    Raises:
-        RuntimeError: Si une erreur se produit lors de l'appel à l'API OpenAI
+        La requête SQL générée, ou None si la génération a échoué, "READONLY_VIOLATION" 
+        si une violation a été détectée, ou "IMPOSSIBLE" si la requête est impossible
     """
     # Utiliser les paramètres par défaut si non spécifiés
     if model is None:
@@ -79,6 +78,11 @@ async def generate_sql(
                 
                 # Extraire la réponse
                 generated_response = result["choices"][0]["message"]["content"].strip()
+                
+                # Vérifier si la réponse est "READONLY_VIOLATION"
+                if generated_response.upper() == "READONLY_VIOLATION":
+                    logger.info("Violation de lecture seule détectée")
+                    return "READONLY_VIOLATION"
                 
                 # Vérifier si la réponse est "IMPOSSIBLE"
                 if generated_response.upper() == "IMPOSSIBLE":
@@ -259,6 +263,7 @@ Requête SQL générée:
 ```
 
 Explique ce que fait cette requête SQL en une phrase courte et simple, sans termes techniques complexes.
+Si la requête est éloignée de la demande originale, mentionne-le également de manière concise.
 """
     
     payload = {
@@ -274,7 +279,7 @@ Explique ce que fait cette requête SQL en une phrase courte et simple, sans ter
             }
         ],
         "temperature": 0.3,
-        "max_tokens": 100
+        "max_tokens": 150
     }
     
     logger.debug(f"Génération d'explication pour la requête SQL avec le modèle {model}")

@@ -1,3 +1,4 @@
+# app/api/routes.py (mise à jour)
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 import logging
@@ -50,7 +51,7 @@ async def translate_to_sql(
         result = await translate_nl_to_sql(
             user_query=request.query,
             schema_path=request.schema_path,
-            validate=request.validate,
+            validate=request.should_validate,  # Utiliser should_validate au lieu de validate
             explain=request.explain,
             store_result=True,  # Toujours stocker les résultats pour améliorer la base de connaissances
             return_similar_queries=include_similar
@@ -75,6 +76,14 @@ async def translate_to_sql(
             processing_time=result["processing_time"],
             similar_queries=result["similar_queries"]
         )
+        
+        # Si le statut est "warning", on renvoie un code 206 (Partial Content)
+        # pour indiquer que la requête a été traitée mais avec des avertissements
+        if result["status"] == "warning":
+            return JSONResponse(
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                content=response.dict()
+            )
         
         return response
     
@@ -115,7 +124,7 @@ async def get_schemas():
     "/health",
     response_model=HealthCheckResponse,
     summary="Vérifier l'état de santé",
-    description="Vérifie l'état de santé des services dépendants (Pinecone, OpenAI, SentenceTransformer)."
+    description="Vérifie l'état de santé des services dépendants (Pinecone, OpenAI, SentenceTransformer, Redis)."
 )
 async def get_health():
     """

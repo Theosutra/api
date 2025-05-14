@@ -1,3 +1,4 @@
+# app/config.py - Solution directe pour les problèmes de Pydantic v2
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import Optional, List
@@ -37,13 +38,18 @@ class Settings(BaseSettings):
     API_KEY: Optional[str] = Field(None, env="API_KEY")
     API_KEY_NAME: str = Field("X-API-Key", env="API_KEY_NAME")
     ALLOWED_HOSTS: List[str] = Field(["*"], env="ALLOWED_HOSTS")
+    SQL_READ_ONLY: bool = Field(True, env="SQL_READ_ONLY")  # Restreint aux requêtes SELECT uniquement
+    
+    # Cache Redis
+    REDIS_URL: Optional[str] = Field(None, env="REDIS_URL")
+    REDIS_TTL: int = Field(3600, env="REDIS_TTL")  # 1 heure par défaut
+    CACHE_ENABLED: bool = Field(True, env="CACHE_ENABLED")
     
     # Paramètres serveur
     DEBUG: bool = Field(False, env="DEBUG")
     
     # Variables supplémentaires trouvées dans le fichier .env
     ADMIN_SECRET: Optional[str] = Field(None, env="ADMIN_SECRET")
-    CACHE_ENABLED: bool = Field(False, env="CACHE_ENABLED")
     METRICS_ENABLED: bool = Field(False, env="METRICS_ENABLED")
     
     # Validateur pour ALLOWED_HOSTS pour supporter le format avec virgules
@@ -53,10 +59,13 @@ class Settings(BaseSettings):
             return [host.strip() for host in v.split(',')]
         return v
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        env_file_encoding = "utf-8"
+    model_config = {
+        "env_file": ".env",
+        "case_sensitive": True,
+        "env_file_encoding": "utf-8",
+        # Si vous voulez aussi ignorer d'autres champs inconnus dans le futur
+        "extra": "ignore"  # Permet les champs supplémentaires non déclarés
+    }
 
 
 @lru_cache()
