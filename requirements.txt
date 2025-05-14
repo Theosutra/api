@@ -15,7 +15,7 @@ sentence-transformers>=2.2.2
 torch>=2.0.0
 
 # Pour la recherche vectorielle
-pinecone-client>=3.0.0
+pinecone
 
 # Pour les requêtes HTTP asynchrones
 aiohttp>=3.8.4
