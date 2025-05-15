@@ -87,7 +87,7 @@ async def generate_sql(
                 # Vérifier si la réponse est "IMPOSSIBLE"
                 if generated_response.upper() == "IMPOSSIBLE":
                     logger.info("La requête a été jugée impossible à traduire en SQL")
-                    return None
+                    return "IMPOSSIBLE"
                 
                 # Retirer les blocs de code markdown si présents
                 if generated_response.startswith("```sql"):
@@ -307,6 +307,96 @@ Si la requête est éloignée de la demande originale, mentionne-le également d
     except Exception as e:
         logger.error(f"Erreur lors de l'obtention de l'explication SQL: {str(e)}")
         return "Impossible d'obtenir une explication pour cette requête."
+
+
+async def check_query_relevance(
+    user_query: str, 
+    model: str = None, 
+    temperature: float = 0.1
+) -> bool:
+    """
+    Vérifie si la requête utilisateur est pertinente pour une base de données RH.
+    
+    Args:
+        user_query: La requête utilisateur à vérifier
+        model: Le modèle OpenAI à utiliser (par défaut, celui de la configuration)
+        temperature: La température pour la génération (par défaut basse pour fiabilité)
+        
+    Returns:
+        True si la requête est pertinente pour une base de données RH, False sinon
+    """
+    # Utiliser les paramètres par défaut si non spécifiés
+    if model is None:
+        model = settings.OPENAI_MODEL
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.OPENAI_API_KEY}"
+    }
+    
+    prompt = f"""Tu es un expert en ressources humaines chargé de déterminer si une question est pertinente pour une base de données RH.
+
+La base de données RH contient des informations sur :
+- Dépôts de déclarations sociales (DSN)
+- Employés (données personnelles, contrats, rémunérations)
+- Entreprises et établissements
+- Absences et arrêts de travail
+- Types de contrats et statuts
+- Paie et rémunérations
+
+Question à évaluer : "{user_query}"
+
+Cette question est-elle pertinente pour une interrogation de base de données RH ? 
+Réponds UNIQUEMENT par "OUI" si la question concerne clairement les ressources humaines, ou "NON" si la question n'a aucun rapport avec les RH (par exemple, sport, météo, politique, etc.).
+"""
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system", 
+                "content": "Tu es un expert en ressources humaines qui détermine si une question est pertinente pour une base de données RH."
+            },
+            {
+                "role": "user", 
+                "content": prompt
+            }
+        ],
+        "temperature": temperature,
+        "max_tokens": 5  # Réponse courte attendue (OUI/NON)
+    }
+    
+    logger.debug(f"Vérification de la pertinence de la requête: '{user_query}'")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=settings.OPENAI_TIMEOUT
+            ) as response:
+                
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"Erreur OpenAI ({response.status}): {error_text}")
+                    # En cas d'erreur, on considère la requête comme pertinente par défaut
+                    return True
+                
+                result = await response.json()
+                validation_result = result["choices"][0]["message"]["content"].strip().upper()
+                
+                is_relevant = "OUI" in validation_result or "YES" in validation_result
+                
+                if not is_relevant:
+                    logger.info(f"Requête non pertinente détectée: '{user_query}'")
+                
+                return is_relevant
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la vérification de pertinence: {str(e)}")
+        # En cas d'erreur, on considère la requête comme pertinente par défaut
+        return True
 
 
 async def check_openai_service() -> dict:

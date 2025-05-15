@@ -1,13 +1,15 @@
-# app/core/translator.py
+# app/core/translator.py - Avec vérification de pertinence
 import os
 import time
 import logging
+import re
+import aiohttp  # Assurez-vous que cette importation existe déjà
 from typing import Dict, Any, List, Tuple, Optional
 
 from app.config import get_settings
 from app.core.embedding import get_embedding
 from app.core.vector_search import find_similar_queries, check_exact_match, store_query
-from app.core.llm import generate_sql, validate_sql_query as llm_validate_sql_query, get_sql_explanation
+from app.core.llm import generate_sql, validate_sql_query as llm_validate_sql_query, get_sql_explanation, check_query_relevance
 from app.utils.schema_loader import load_schema
 from app.utils.sql_validator import SQLValidator
 from app.utils.cache import cached, REDIS_TTL
@@ -31,47 +33,53 @@ async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], s
     Returns:
         Le prompt formaté pour le LLM
     """
+    # Pas besoin de formater le schéma Markdown - on l'utilise tel quel
+    # puisque le SQLValidator simplifié ne fait pas d'analyse du schéma
+    formatted_schema = schema
+        
     prompt = f"""Tu es un expert SQL chevronné spécialisé dans la traduction de questions en langage naturel en requêtes SQL performantes et optimisées pour le reporting RH.
 
 # CONTEXTE
-Tu disposes du schéma complet de la base de données dans le fichier datasulting.sql. Cette base contient des données RH et sociales issues de Déclarations Sociales Nominatives (DSN).
+Tu disposes du schéma complet de la base de données. Cette base contient des données RH et sociales issues de Déclarations Sociales Nominatives (DSN).
 
 # STRUCTURE PRINCIPALE DE LA BASE DE DONNÉES
-- depot: Table centrale contenant les informations sur les dépôts de DSN par entreprise et par période
-- facts: Table principale des données salariés (contrats, informations personnelles)
-- facts_rem: Contient les éléments de rémunération liés aux salariés
-- facts_abs_final: Contient les absences des salariés
-- entreprise: Contient les informations sur les entreprises/établissements
-- referentiel: Contient les valeurs de référence pour décoder les codes utilisés dans les autres tables
+- DEPOT: Table centrale contenant les informations sur les dépôts de DSN par entreprise et par période
+- FACTS: Table principale des données salariés (contrats, informations personnelles)
+- FACTS_REM: Contient les éléments de rémunération liés aux salariés
+- FACTS_ABS_FINAL: Contient les absences des salariés
+- ENTREPRISE: Contient les informations sur les entreprises/établissements
+- REFERENTIEL: Contient les valeurs de référence pour décoder les codes utilisés dans les autres tables
 
 # RELATIONS ET INFORMATIONS ESSENTIELLES
-- Un "depot" correspond à une déclaration sociale pour un SIREN+NIC (SIRET) sur une période (généralement mensuelle)
-- Chaque salarié dans "facts" est lié à un depot via ID_NUMDEPOT
+- Un "DEPOT" correspond à une déclaration sociale pour un SIREN+NIC (SIRET) sur une période (généralement mensuelle)
+- Chaque salarié dans "FACTS" est lié à un DEPOT via ID_NUMDEPOT
 - Les types de contrats sont codifiés dans NATURE_CONTRAT:
   * '01' = CDI
   * '02' = CDD
   * '03' = Intérim
   * '07' à '08' = Stages/Alternances
 - L'âge est stocké dans la colonne "AGE" comme VARCHAR - utiliser CAST pour les tris numériques
-- La table "referentiel" permet de traduire les codes en libellés via les colonnes:
-  * RUBRIQUE_DSN: le type de code (ex: 'S21.G00.40.007' pour NATURE_CONTRAT)
+- La table "REFERENTIEL" permet de traduire les codes en libellés via les colonnes:
+  * RUBRIQUE_DSN: le type de code (ex: pour les types de contrat)
   * CODE: la valeur du code (ex: '01')
   * LIBELLE: la signification du code (ex: 'Contrat à durée indéterminée')
 
+# SCHÉMA DE LA BASE DE DONNÉES
+```
+{formatted_schema}
+```
+
 # CONSIGNES IMPORTANTES
+- Cette base de données contient UNIQUEMENT des informations RH et sociales. Elle ne contient PAS d'informations sur le sport, la météo, la politique, ou d'autres sujets non liés aux RH.
+- Si la demande ne concerne pas les RH, réponds "IMPOSSIBLE" car la requête est hors sujet.
 - Génère UNIQUEMENT des requêtes SELECT (aucune opération d'écriture n'est autorisée)
 - Utilise des ALIAS explicites et cohérents (ex: f pour facts, d pour depot, e pour entreprise, r pour referentiel)
 - Préfixe chaque colonne par son alias de table (ex: f.NATURE_CONTRAT, d.PERIODE)
 - Pour les champs numériques stockés en VARCHAR, utilise CAST(colonne AS SIGNED) ou CAST(colonne AS DECIMAL) pour les calculs et tris
 - Utilise toujours des JOINs explicites avec la clause ON (jamais de jointures implicites)
-- Pour les jointures avec la table referentiel, fais attention à bien filtrer sur RUBRIQUE_DSN et CODE
+- Pour les jointures avec la table REFERENTIEL, fais attention à bien filtrer sur RUBRIQUE_DSN et CODE
 - Utilise des commentaires /* code = libellé */ pour expliquer les codes dans les conditions WHERE
-- Lorsqu'une requête concerne des périodes, la colonne PERIODE dans depot est au format 'MMAAAA' (utilise LEFT, RIGHT, SUBSTRING)
-
-# SCHÉMA DE LA BASE DE DONNÉES
-```sql
-{schema}
-```
+- Lorsqu'une requête concerne des périodes, la colonne PERIODE dans DEPOT est au format 'MMAAAA' (utilise LEFT, RIGHT, SUBSTRING)
 
 # EXEMPLES DE REQUÊTES PERTINENTES
 """
@@ -92,11 +100,11 @@ SQL:
 SELECT 
     f.ID, f.MATRICULE, f.NOM, f.PRENOM, e.DENOMINATION AS nom_entreprise
 FROM 
-    facts f
+    FACTS f
 JOIN 
-    depot d ON f.ID_NUMDEPOT = d.ID
+    DEPOT d ON f.ID_NUMDEPOT = d.ID
 LEFT JOIN 
-    entreprise e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
+    ENTREPRISE e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
 WHERE 
     f.NATURE_CONTRAT = '01' /* 01 = CDI */
 
@@ -110,7 +118,7 @@ SELECT
     END AS tranche_age, 
     COUNT(*) AS nombre_employes 
 FROM 
-    facts f 
+    FACTS f 
 GROUP BY 
     tranche_age
 ORDER BY 
@@ -126,9 +134,9 @@ SELECT
     COALESCE(r.LIBELLE, 'Non renseigné') AS type_contrat, 
     COUNT(*) AS nombre 
 FROM 
-    facts f 
+    FACTS f 
 LEFT JOIN 
-    referentiel r ON r.CODE = f.NATURE_CONTRAT AND r.RUBRIQUE_DSN = 'S21.G00.40.007'
+    REFERENTIEL r ON r.CODE = f.NATURE_CONTRAT AND r.RUBRIQUE_DSN LIKE '%NATURE_CONTRAT%'
 GROUP BY 
     COALESCE(r.LIBELLE, 'Non renseigné')
 ORDER BY 
@@ -142,11 +150,11 @@ SELECT
     e.DENOMINATION AS nom_entreprise,
     SUM(CAST(f.MNT_BRUT AS DECIMAL(15,2))) AS masse_salariale_brute
 FROM 
-    facts f
+    FACTS f
 JOIN 
-    depot d ON f.ID_NUMDEPOT = d.ID
+    DEPOT d ON f.ID_NUMDEPOT = d.ID
 LEFT JOIN 
-    entreprise e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
+    ENTREPRISE e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
 WHERE 
     d.PERIODE = '052023' /* Format MMAAAA pour mai 2023 */
 GROUP BY 
@@ -162,11 +170,11 @@ SELECT
     COUNT(DISTINCT fa.id_fact) AS nb_salaries_absents,
     ROUND((COUNT(DISTINCT fa.id_fact) / COUNT(DISTINCT f.ID)) * 100, 2) AS taux_absenteisme
 FROM 
-    facts f
+    FACTS f
 JOIN 
-    depot d ON f.ID_NUMDEPOT = d.ID
+    DEPOT d ON f.ID_NUMDEPOT = d.ID
 LEFT JOIN 
-    facts_abs_final fa ON f.ID = fa.id_fact
+    FACTS_ABS_FINAL fa ON f.ID = fa.id_fact
 GROUP BY 
     f.DEPARTEMENT
 HAVING 
@@ -174,17 +182,28 @@ HAVING
 ORDER BY 
     taux_absenteisme DESC
 
+# EXEMPLES DE REQUÊTES HORS SUJET QUI DOIVENT ÊTRE REJETÉES
+Question: "Qui a gagné la Ligue des Champions cette année ?"
+SQL: IMPOSSIBLE
+
+Question: "Quelle est la météo à Paris aujourd'hui ?"
+SQL: IMPOSSIBLE
+
+Question: "Donnez-moi la recette de la tarte aux pommes"
+SQL: IMPOSSIBLE
+
 # DEMANDE À TRADUIRE EN SQL
 "{user_query}"
 
 # INSTRUCTIONS
 1. Analyse attentivement la demande pour comprendre précisément les besoins
-2. Identifie les tables et champs pertinents dans le schéma
-3. Crée une requête SQL optimisée qui répond exactement à la question
-4. Vérifie que toutes les tables et colonnes existent et que tous les alias sont cohérents
-5. Assure-toi que les jointures sont correctement définies avec la condition ON
-6. Ajoute des commentaires pour expliquer les codes et choix techniques importants
-7. Retourne UNIQUEMENT la requête SQL sans aucune explication autour
+2. Vérifie si la demande concerne bien les RH et cette base de données (sinon réponds IMPOSSIBLE)
+3. Identifie les tables et champs pertinents dans le schéma
+4. Crée une requête SQL optimisée qui répond exactement à la question
+5. Vérifie que toutes les tables et colonnes existent et que tous les alias sont cohérents
+6. Assure-toi que les jointures sont correctement définies avec la condition ON
+7. Ajoute des commentaires pour expliquer les codes et choix techniques importants
+8. Retourne UNIQUEMENT la requête SQL sans aucune explication autour
 
 SQL Query:"""
     
@@ -202,10 +221,11 @@ async def translate_nl_to_sql(
 ) -> Dict[str, Any]:
     """
     Fonction principale asynchrone: traduit une requête en langage naturel en SQL.
+    Version adaptée pour fonctionner avec le SQLValidator simplifié et la vérification de pertinence.
     
     Args:
         user_query: La requête en langage naturel à traduire
-        schema_path: Chemin vers le fichier de schéma SQL (optionnel)
+        schema_path: Chemin vers le fichier de schéma SQL ou Markdown (optionnel)
         validate: Valider la requête SQL générée
         explain: Fournir une explication de la requête SQL
         store_result: Stocker la paire requête-SQL dans Pinecone
@@ -248,6 +268,15 @@ async def translate_nl_to_sql(
         return result
     
     try:
+        # NOUVELLE ÉTAPE: Vérifier si la requête est pertinente pour une base de données RH
+        is_relevant = await check_query_relevance(user_query)
+        
+        if not is_relevant:
+            result["status"] = "error"
+            result["validation_message"] = "Cette requête ne semble pas concerner les ressources humaines. Cette base de données contient uniquement des informations RH (employés, contrats, absences, paie, etc.)."
+            result["processing_time"] = time.time() - start_time
+            return result
+        
         # Charger le schéma
         if schema_path is None:
             schema_path = settings.SCHEMA_PATH
@@ -287,7 +316,7 @@ async def translate_nl_to_sql(
         if exact_match:
             logger.info(f"Correspondance exacte trouvée pour la requête")
             
-            # Valider aussi les correspondances exactes avec le nouveau validateur
+            # Valider aussi les correspondances exactes avec le validateur simplifié
             sql_validator = SQLValidator(schema_content=schema, schema_path=schema_path)
             
             # Vérifier si la requête contient des opérations destructives
@@ -314,6 +343,14 @@ async def translate_nl_to_sql(
             # Générer le SQL
             sql_result = await generate_sql(prompt, openai_model, openai_temperature)
             
+            # Vérifier si la génération a retourné "IMPOSSIBLE" (hors sujet)
+            if sql_result is None or sql_result.upper() == "IMPOSSIBLE":
+                logger.warning(f"La requête a été jugée hors sujet ou impossible à traduire en SQL")
+                result["valid"] = False
+                result["validation_message"] = "Cette demande ne semble pas concerner les ressources humaines ou est impossible à traduire en SQL avec le schéma fourni."
+                result["status"] = "error"
+                return result
+            
             # Vérifier les réponses spéciales du LLM
             if sql_result and sql_result.upper() == "READONLY_VIOLATION":
                 logger.warning(f"Violation de lecture seule détectée pour la requête: {user_query}")
@@ -323,15 +360,7 @@ async def translate_nl_to_sql(
                 result["status"] = "error"
                 return result
             
-            # Vérifier si la génération a échoué ou retourné "IMPOSSIBLE"
-            if sql_result is None or sql_result.upper() == "IMPOSSIBLE":
-                logger.warning(f"La requête a été jugée impossible à traduire en SQL")
-                result["valid"] = False
-                result["validation_message"] = "Cette demande ne semble pas concerner une requête SQL sur cette base de données, ou est impossible à traduire en SQL avec le schéma fourni."
-                result["status"] = "error"
-                return result
-            
-            # Pré-validation de sécurité pour détecter les requêtes destructives
+            # Validation simplifiée qui vérifie uniquement la sécurité
             sql_validator = SQLValidator(schema_content=schema, schema_path=schema_path)
             is_destructive, destructive_message = sql_validator.check_destructive_operations(sql_result)
             
@@ -346,7 +375,7 @@ async def translate_nl_to_sql(
             
             # Valider la requête générée si demandé
             if validate:
-                # Effectuer la validation complète
+                # Effectuer la validation simplifiée
                 validation_result = await sql_validator.validate_sql_query(sql_result, user_query)
                 
                 # Mise à jour des résultats
@@ -356,27 +385,13 @@ async def translate_nl_to_sql(
                 # Stocker les détails supplémentaires pour le debug si nécessaire
                 if settings.DEBUG:
                     result["validation_details"] = validation_result["details"]
-                
-                # Si la validation SQL échoue, effectuer aussi la validation LLM comme filet de sécurité
-                if not validation_result["valid"]:
-                    llm_valid, llm_message = await llm_validate_sql_query(sql_result, user_query, schema, openai_model)
-                    
-                    # Si le LLM valide quand même la requête (il est plus flexible), on accepte avec un avertissement
-                    if llm_valid:
-                        result["valid"] = True
-                        result["validation_message"] += f" [Attention: {validation_result['message']}]"
-            
-            # Vérifier la cohérence entre validation et statut
-            if result["valid"] == False:
-                # Si la requête n'est pas valide mais qu'elle semble être une tentative de conversion
-                # d'une opération d'écriture en SELECT
-                if any(op in user_query.lower() for op in forbidden_operations):
-                    result["status"] = "warning"
-                    result["validation_message"] += " Pour des raisons de sécurité, les opérations d'écriture ont été converties en requêtes de consultation. Veuillez vérifier si cette requête répond à votre besoin."
-                else:
-                    result["status"] = "warning"
             else:
-                result["status"] = "success"
+                # Si la validation est désactivée, considérer la requête comme valide
+                result["valid"] = True
+                result["validation_message"] = "Validation désactivée. La requête est considérée comme valide."
+            
+            # Toujours considérer la requête comme valide tant qu'elle n'est pas destructive
+            result["status"] = "success"
             
             # Si la requête est valide et qu'on doit la stocker, on l'ajoute à Pinecone
             if store_result and result["valid"] and sql_result:

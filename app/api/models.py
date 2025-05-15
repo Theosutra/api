@@ -57,9 +57,9 @@ class SQLTranslationRequest(BaseModel):
             if '..' in v or '~' in v:
                 raise ValueError("Le chemin du schéma contient des caractères non autorisés")
             
-            # Vérifier que le chemin mène à un fichier SQL
-            if not v.endswith('.sql'):
-                raise ValueError("Le chemin doit pointer vers un fichier SQL")
+            # Vérifier que le chemin mène à un fichier SQL ou MD
+            if not (v.endswith('.sql') or v.endswith('.md')):
+                raise ValueError("Le chemin doit pointer vers un fichier SQL ou MD")
         
         return v
     

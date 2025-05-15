@@ -97,10 +97,10 @@ def sanitize_input(input_text: str) -> str:
 
 def validate_schema_path(schema_path: Optional[str]) -> Tuple[bool, Optional[str]]:
     """
-    Valide le chemin du schéma SQL.
+    Valide le chemin du schéma SQL ou Markdown.
     
     Args:
-        schema_path: Le chemin vers le fichier de schéma SQL
+        schema_path: Le chemin vers le fichier de schéma
         
     Returns:
         Un tuple (valide, message) où valide est un booléen indiquant si le chemin semble valide,
@@ -110,8 +110,8 @@ def validate_schema_path(schema_path: Optional[str]) -> Tuple[bool, Optional[str
         return True, None
     
     # Vérifier l'extension
-    if not schema_path.endswith('.sql'):
-        return False, "Le fichier de schéma doit avoir l'extension .sql"
+    if not (schema_path.endswith('.sql') or schema_path.endswith('.md')):
+        return False, "Le fichier de schéma doit avoir l'extension .sql ou .md"
     
     # Vérifier les caractères dangereux
     if '../' in schema_path or './' in schema_path or '~' in schema_path:
