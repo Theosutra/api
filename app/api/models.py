@@ -1,4 +1,3 @@
-# app/api/models.py (mise à jour)
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any
 import re
@@ -65,7 +64,7 @@ class SQLTranslationRequest(BaseModel):
         return v
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "query": "Liste des clients qui ont effectué plus de 5 commandes en 2023",
                 "schema_path": None,
@@ -120,7 +119,7 @@ class SQLTranslationResponse(BaseModel):
     )
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "query": "Liste des clients qui ont effectué plus de 5 commandes en 2023",
                 "sql": "SELECT c.nom, c.prenom, COUNT(cmd.id) as nb_commandes FROM clients c JOIN commandes cmd ON c.id = cmd.client_id WHERE YEAR(cmd.date) = 2023 GROUP BY c.id HAVING COUNT(cmd.id) > 5;",
@@ -147,7 +146,7 @@ class HealthCheckResponse(BaseModel):
     )
     
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "status": "ok",
                 "version": "1.0.0",

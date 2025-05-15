@@ -28,6 +28,10 @@ _Une API intelligente qui traduit vos questions en langage naturel en requêtes 
 - 🔐 **Sécurisé** - Authentication par clé API, validation des entrées, limitation de débit
 - 📝 **Documentation Interactive** - Interface Swagger UI complète et intuitive
 - 🐳 **Conteneurisé** - Déploiement facile avec Docker et Docker Compose
+- 🔄 **Mise en Cache Redis** - Stockage temporaire des résultats pour des performances améliorées
+- 🔍 **Validation SQL Avancée** - Vérification rigoureuse de la syntaxe et compatibilité des schémas
+- 🛡️ **Mode Lecture Seule** - Protection contre les opérations d'écriture potentiellement dangereuses
+- 📊 **Métriques de Performance** - Suivi des temps de traitement et des taux de réussite
 
 ## 🚀 Installation
 
@@ -36,6 +40,7 @@ _Une API intelligente qui traduit vos questions en langage naturel en requêtes 
 - Python 3.8+
 - Clé API [Pinecone](https://www.pinecone.io/)
 - Clé API [OpenAI](https://openai.com/)
+- Redis (optionnel, pour la mise en cache)
 - Docker & Docker Compose (optionnel, pour déploiement conteneurisé)
 
 ### Installation Standard
@@ -200,6 +205,15 @@ curl -X 'GET' \
   -H 'X-API-Key: votre_clé_api'
 ```
 
+#### Obtenir la liste des schémas disponibles
+
+```bash
+curl -X 'GET' \
+  'http://localhost:8000/api/v1/schemas' \
+  -H 'accept: application/json' \
+  -H 'X-API-Key: votre_clé_api'
+```
+
 ## 🏗️ Architecture
 
 L'application est structurée de manière modulaire, avec une séparation claire des responsabilités :
@@ -217,7 +231,9 @@ nl2sql-api/
 │   │   └── llm.py            # Interaction avec l'API OpenAI
 │   ├── utils/                # Utilitaires
 │   │   ├── schema_loader.py  # Chargement des schémas SQL
-│   │   └── validators.py     # Validation des entrées/sorties
+│   │   ├── validators.py     # Validation des entrées/sorties
+│   │   ├── sql_validator.py  # Validation avancée des requêtes SQL
+│   │   └── cache.py          # Gestion du cache Redis
 │   ├── schemas/              # Schémas SQL des bases de données
 │   ├── security.py           # Configuration de sécurité
 │   ├── dependencies.py       # Dépendances FastAPI
@@ -235,16 +251,20 @@ nl2sql-api/
 ```mermaid
 graph TD
     A[Requête utilisateur] --> B[Vectorisation]
-    B --> C[Recherche dans Pinecone]
-    C --> D{Correspondance exacte?}
-    D -->|Oui| E[Retourner SQL stocké]
-    D -->|Non| F[Construire prompt pour LLM]
-    F --> G[Génération SQL avec OpenAI]
-    G --> H[Validation du SQL]
-    H --> I[Génération d'explication]
-    I --> J[Stockage dans Pinecone]
-    J --> K[Réponse à l'utilisateur]
-    E --> K
+    B --> C{Cache Redis?}
+    C -->|Oui| D[Retourner résultat cached]
+    C -->|Non| E[Recherche dans Pinecone]
+    E --> F{Correspondance exacte?}
+    F -->|Oui| G[Retourner SQL stocké]
+    F -->|Non| H[Construire prompt pour LLM]
+    H --> I[Génération SQL avec OpenAI]
+    I --> J[Validation du SQL]
+    J --> K[Génération d'explication]
+    K --> L[Stockage dans Pinecone]
+    L --> M[Mise en cache Redis]
+    M --> N[Réponse à l'utilisateur]
+    G --> N
+    D --> N
 ```
 
 ## ⚙️ Configuration
@@ -257,16 +277,24 @@ L'application est configurable via le fichier `.env` ou des variables d'environn
 | `OPENAI_API_KEY` | Clé API OpenAI | (Requis) |
 | `PINECONE_INDEX_NAME` | Nom de l'index Pinecone | `nl2sql` |
 | `PINECONE_ENVIRONMENT` | Environnement Pinecone | `gcp-starter` |
-| `EMBEDDING_MODEL` | Modèle d'embedding | `all-mpnet-base-v2` |
+| `EMBEDDING_MODEL` | Modèle d'embedding | `all-MiniLM-L6-v2` |
 | `OPENAI_MODEL` | Modèle OpenAI | `gpt-4o` |
 | `OPENAI_TEMPERATURE` | Température pour la génération | `0.2` |
+| `OPENAI_TIMEOUT` | Délai d'attente pour OpenAI (secondes) | `30` |
 | `EXACT_MATCH_THRESHOLD` | Seuil pour correspondance exacte | `0.95` |
 | `TOP_K_RESULTS` | Nombre de résultats similaires | `5` |
 | `SCHEMA_PATH` | Chemin vers le fichier de schéma SQL | `app/schemas/datasulting.sql` |
+| `API_PREFIX` | Préfixe pour les routes API | `/api/v1` |
 | `API_KEY` | Clé API pour l'authentification | (Facultatif) |
 | `API_KEY_NAME` | Nom de l'en-tête pour la clé API | `X-API-Key` |
 | `ALLOWED_HOSTS` | Liste des hôtes autorisés | `["*"]` |
+| `SQL_READ_ONLY` | Restreint aux requêtes SELECT uniquement | `true` |
+| `REDIS_URL` | URL du serveur Redis | (Facultatif) |
+| `REDIS_TTL` | Durée de vie du cache en secondes | `3600` |
+| `CACHE_ENABLED` | Activation du cache Redis | `true` |
 | `DEBUG` | Mode débogage | `false` |
+| `ADMIN_SECRET` | Clé secrète pour l'administration | (Facultatif) |
+| `METRICS_ENABLED` | Activation des métriques | `false` |
 
 ## 📊 Intégration avec n8n
 
@@ -328,6 +356,24 @@ Les contributions sont les bienvenues ! Voici comment contribuer :
 - Les performances peuvent varier selon la qualité du schéma SQL fourni
 - Les requêtes très spécifiques à un domaine peuvent nécessiter plus d'exemples
 - Les limitations de débit d'API sont appliquées pour éviter les abus
+
+</details>
+
+<details>
+<summary><b>Comment fonctionne le cache Redis ?</b></summary>
+
+Le cache Redis stocke temporairement les résultats des traductions pour améliorer les performances :
+1. Chaque requête est vectorisée et hachée pour créer une clé de cache unique
+2. Si une requête identique ou très similaire est trouvée dans le cache, le résultat est retourné immédiatement
+3. La durée de vie des entrées du cache est configurable via la variable REDIS_TTL
+4. Le cache peut être désactivé en définissant CACHE_ENABLED=false
+
+</details>
+
+<details>
+<summary><b>L'API supporte-t-elle les écritures dans la base de données ?</b></summary>
+
+Par défaut, l'API est configurée en mode lecture seule (SQL_READ_ONLY=true), ce qui permet uniquement les requêtes SELECT. Pour activer les opérations d'écriture, définissez SQL_READ_ONLY=false dans votre fichier .env, mais uniquement dans un environnement sécurisé avec les permissions adéquates.
 
 </details>
 
