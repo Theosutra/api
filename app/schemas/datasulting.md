@@ -4,6 +4,33 @@
 
 Cette base de données contient des informations sur les dépôts de déclarations sociales (DSN - Déclaration Sociale Nominative), les entreprises, les salariés, les rémunérations, et les absences. Elle est structurée autour de plusieurs tables principales reliées par des clés étrangères.
 
+## ⚠️ Framework obligatoire pour chaque requête
+
+### Éléments obligatoires
+
+Chaque requête SQL générée DOIT respecter ce framework de sécurité :
+
+1. **Filtre utilisateur obligatoire** : 
+   - `WHERE [alias_depot].ID_USER = ?` 
+   - Exemple : `WHERE d.ID_USER = ?` (si l'alias de DEPOT est 'd')
+   - La table DEPOT doit TOUJOURS être présente pour permettre ce filtre
+
+2. **Hashtags obligatoires** (selon le contexte) :
+   - `#DEPOT_[alias]#` : Quand on utilise la table DEPOT avec un alias
+   - `#FACTS_[alias]#` : Quand on utilise la table FACTS avec un alias  
+   - `#PERIODE#` : Pour les requêtes avec critères temporels
+
+### Exemple de requête conforme
+
+```sql
+SELECT f.NOM, f.PRENOM, f.MNT_BRUT
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
+WHERE d.ID_USER = ? 
+  AND f.NATURE_CONTRAT = '01'
+ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
+```
+
 ## Tables principales
 
 ### 1. DEPOT
@@ -16,7 +43,7 @@ Table centrale qui contient les informations sur les dépôts de déclarations s
 | NUMDEPOT | varchar(500) | Numéro du dépôt |
 | ID_CLIENT | int | Identifiant du client |
 | STATUS | varchar(50) | Statut du dépôt |
-| ID_USER | int | Identifiant de l'utilisateur |
+| ID_USER | int | Identifiant de l'utilisateur **[CLEF DE SÉCURITÉ]** |
 | DATE_CREATION | datetime | Date de création du dépôt |
 | DATE_MAJ | datetime | Date de mise à jour du dépôt |
 | TYPE_FIC | varchar(50) | Type de fichier (DSN par défaut) |
@@ -210,6 +237,48 @@ Table de référence pour les codes et libellés utilisés dans la DSN.
 | LANG | varchar(2) | Langue du libellé (FR par défaut) |
 | LINK_DATA | varchar(500) | Colonne de référence dans la base de données |
 
+### 9. HASHTAG_MODELE
+
+Table de référence pour les hashtags utilisés dans les requêtes SQL générées.
+
+| Colonne | Type | Description |
+|---------|------|-------------|
+| HASHTAG | varchar(50) | Code HashTag présent dans les requêtes SQL |
+| LIBELLE | varchar(255) | Libellé du HashTag |
+| DESCRIPTION | varchar(2000) | Description du HashTag |
+| TABLE_REF | varchar(50) | Table de référentiel pour cet axe/filtre |
+| TABLE_DATA | varchar(50) | Table de donnée où se retrouve cet axe ou filtre |
+| COLONNE_DATA | varchar(50) | Colonne correspondant à cet axe ou filtre |
+| RUBRIQUE_DSN | varchar(50) | Rubrique DSN correspondant à ce HASHTAG |
+
+## Hashtags disponibles et leur utilisation
+
+### Hashtags principaux
+- `#PERIODE#` : Période de paie (colonne PERIODE dans depot)
+- `#DEPOT_[alias]#` : Table DEPOT avec son alias (obligatoire)
+- `#FACTS_[alias]#` : Table FACTS avec son alias
+- `#TYPECONTRAT#` : Nature du contrat (NATURE_CONTRAT dans facts)
+- `#SEXE#` : Sexe du salarié (SEXE dans facts)
+- `#CATEGORIE#` : Statut catégoriel (CATEGORIE dans facts)
+- `#EMPLOI#` : Emploi/fonction (EMPLOI dans facts)
+- `#AGE#` : Age du salarié (AGE dans facts)
+- `#MATRICULE#` : Matricule du salarié
+- `#ABSENCE#` : Motif d'arrêt (pour table facts_abs_final)
+
+### Hashtags géographiques
+- `#REGION#` : Région
+- `#DEPARTEMENT#` : Département  
+- `#SIREN#` : Numéro SIREN
+- `#SIRET#` : Numéro SIRET
+
+### Hashtags spécifiques clients (ORANO)
+- `#PAYSORANO#`, `#EXPERT#`, `#TALENT#`, `#CSP#`, `#ORGA#`, `#METIER#`
+- `#PLANFORM#`, `#THEMEFORM#`, `#ACTIONFORM#` (formation)
+
+### Hashtags techniques
+- `?` : Identifiant Client/Utilisateur (utilisé pour ID_USER)
+- `#VALEUR#` : Valeur dynamique pour les drill-down
+
 ## Relations principales
 
 1. `depot.ID` → `facts.ID_NUMDEPOT` : Un dépôt contient plusieurs facts (salariés)
@@ -230,9 +299,24 @@ Table de référence pour les codes et libellés utilisés dans la DSN.
 
 ## Conseils pour créer des requêtes
 
-1. Utiliser les jointures appropriées entre les tables principales
-2. Filtrer par période (PERIODE dans depot) pour les analyses temporelles
-3. Utiliser les témoins (TEM_FP, TEM_EMB, TEM_SOR) pour identifier les mouvements de personnel
-4. Pour les analyses d'absences, joindre facts et facts_abs_final sur id_fact
-5. Pour les analyses de rémunération, joindre facts et facts_rem sur ID_FACT
-6. Utiliser la table referentiel pour obtenir les libellés des codes utilisés
+1. **TOUJOURS inclure le filtre de sécurité** : `WHERE [alias_depot].ID_USER = ?`
+2. **TOUJOURS joindre la table DEPOT** : Directement ou indirectement via FACTS
+3. **Utiliser les hashtags appropriés** : Minimum `#DEPOT_[alias]#`
+4. Filtrer par période (PERIODE dans depot) pour les analyses temporelles
+5. Utiliser les témoins (TEM_FP, TEM_EMB, TEM_SOR) pour identifier les mouvements de personnel
+6. Pour les analyses d'absences, joindre facts et facts_abs_final sur id_fact
+7. Pour les analyses de rémunération, joindre facts et facts_rem sur ID_FACT
+8. Utiliser la table referentiel pour obtenir les libellés des codes utilisés
+
+## Codes importants à retenir
+
+### Types de contrats (NATURE_CONTRAT)
+- '01' = CDI
+- '02' = CDD
+- '03' = Intérim
+- '07' à '08' = Stages/Alternances
+
+### Témoins de présence
+- TEM_FP = 1 : Salarié présent en fin de mois
+- TEM_EMB = 1 : Salarié embauché dans le mois
+- TEM_SOR = 1 : Salarié sorti dans le mois

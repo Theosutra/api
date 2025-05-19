@@ -1,12 +1,16 @@
-# app/api/routes.py - Routes mises à jour avec framework
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 import logging
 import time
 from typing import Optional, List
 
-from app.api.models import SQLTranslationRequest, SQLTranslationResponse, HealthCheckResponse
+from app.api.models import (
+    SQLTranslationRequest, SQLTranslationResponse, HealthCheckResponse,
+    SQLFrameworkValidationRequest, SQLFrameworkValidationResponse,
+    AvailableModelsResponse
+)
 from app.core.translator import translate_nl_to_sql, health_check
+from app.core.llm_service import LLMService
 from app.dependencies import get_api_key, rate_limit
 from app.utils.schema_loader import get_available_schemas
 
@@ -24,22 +28,22 @@ router = APIRouter(
     "/translate",
     response_model=SQLTranslationResponse,
     summary="Traduire du langage naturel en SQL",
-    description="Traduit une requête en langage naturel en SQL optimisé avec respect du framework obligatoire (filtre ID_USER, hashtags).",
+    description="Traduit une requête en langage naturel en SQL optimisé avec respect du framework obligatoire (filtre ID_USER, hashtags). Permet de choisir le fournisseur LLM et le modèle. Option pour inclure les détails complets des vecteurs similaires.",
     response_description="La requête SQL générée et les métadonnées associées, avec validation du framework"
 )
 async def translate_to_sql(
     request: SQLTranslationRequest,
     req: Request,
-    include_similar: bool = False
+    include_similar: bool = False  # Pour rétrocompatibilité (format simplifié)
 ):
     """
     Endpoint principal pour traduire une requête en langage naturel en SQL.
-    Intègre la validation du framework obligatoire.
+    Intègre la validation du framework obligatoire et le choix du provider/modèle.
     
     Args:
         request: La requête contenant le texte en langage naturel et les paramètres
         req: L'objet Request de FastAPI (pour la limitation de débit)
-        include_similar: Indique si les requêtes similaires doivent être incluses dans la réponse
+        include_similar: Indique si les requêtes similaires doivent être incluses dans la réponse (format simplifié, rétrocompatibilité)
         
     Returns:
         SQLTranslationResponse: La requête SQL correspondante et les métadonnées associées, 
@@ -49,16 +53,19 @@ async def translate_to_sql(
     await rate_limit(req)
     
     try:
-        # Appel à la fonction principale de traduction avec paramètres framework
+        # Appel à la fonction principale de traduction avec tous les paramètres
         result = await translate_nl_to_sql(
             user_query=request.query,
             schema_path=request.schema_path,
             validate=request.should_validate,
             explain=request.explain,
             store_result=True,  # Toujours stocker les résultats pour améliorer la base de connaissances
-            return_similar_queries=include_similar,
-            user_id_placeholder=getattr(request, 'user_id_placeholder', '?'),  # Valeur par défaut si l'attribut n'existe pas
-            use_cache=getattr(request, 'use_cache', True)  # Nouveau paramètre pour contrôler le cache
+            return_similar_queries=include_similar,  # Format simplifié pour rétrocompatibilité
+            user_id_placeholder=request.user_id_placeholder,
+            use_cache=request.use_cache,
+            provider=request.provider,
+            model=request.model,
+            include_similar_details=request.include_similar_details  # NOUVEAU : Détails complets des vecteurs
         )
         
         # Si la traduction a échoué, renvoyer une erreur
@@ -68,7 +75,7 @@ async def translate_to_sql(
                 detail=result["validation_message"] or "Impossible de traduire la requête"
             )
         
-        # Convertir le résultat en modèle de réponse
+        # Convertir le résultat en modèle de réponse avec tous les champs
         response_data = {
             "query": request.query,
             "sql": result["sql"],
@@ -78,17 +85,21 @@ async def translate_to_sql(
             "is_exact_match": result["is_exact_match"],
             "status": result["status"],
             "processing_time": result["processing_time"],
-            "similar_queries": result["similar_queries"],
+            "similar_queries": result["similar_queries"],  # Format simplifié (rétrocompatibilité)
+            "similar_queries_details": result["similar_queries_details"],  # NOUVEAU : Détails complets
             "framework_compliant": result.get("framework_compliant", False),
-            "framework_details": result.get("framework_details")
+            "framework_details": result.get("framework_details"),
+            "from_cache": result.get("from_cache", False),
+            "provider": result.get("provider"),
+            "model": result.get("model")
         }
         
         response = SQLTranslationResponse(**response_data)
         
         # Déterminer le code de statut HTTP approprié
         if result["status"] == "success":
-            if not result.get("framework_compliant", False) and request.enforce_framework:
-                # Si le framework n'est pas respecté et qu'il est requis, retourner un avertissement
+            if not result.get("framework_compliant", False):
+                # Si le framework n'est pas respecté, retourner un avertissement
                 return JSONResponse(
                     status_code=status.HTTP_206_PARTIAL_CONTENT,
                     content=response.dict()
@@ -122,6 +133,31 @@ async def translate_to_sql(
 
 
 @router.get(
+    "/models",
+    response_model=AvailableModelsResponse,
+    summary="Obtenir les modèles LLM disponibles",
+    description="Récupère la liste des modèles LLM disponibles par fournisseur (OpenAI, Anthropic, Google)."
+)
+async def get_available_models():
+    """
+    Endpoint pour récupérer la liste des modèles LLM disponibles.
+    
+    Returns:
+        Liste des modèles disponibles par provider
+    """
+    try:
+        models = await LLMService.get_available_models()
+        return AvailableModelsResponse(models=models)
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des modèles: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des modèles: {str(e)}"
+        )
+
+
+@router.get(
     "/schemas",
     response_model=List[str],
     summary="Obtenir les schémas disponibles",
@@ -150,7 +186,7 @@ async def get_schemas():
     "/health",
     response_model=HealthCheckResponse,
     summary="Vérifier l'état de santé",
-    description="Vérifie l'état de santé des services dépendants (Pinecone, OpenAI, SentenceTransformer, Redis)."
+    description="Vérifie l'état de santé des services dépendants (Pinecone, LLM providers, SentenceTransformer, Redis)."
 )
 async def get_health():
     """
@@ -181,38 +217,48 @@ async def get_health():
 
 @router.post(
     "/validate-framework",
+    response_model=SQLFrameworkValidationResponse,
     summary="Valider le framework d'une requête SQL",
-    description="Valide qu'une requête SQL respecte le framework obligatoire (filtre ID_USER, hashtags, etc.)",
-    response_model=dict
+    description="Valide qu'une requête SQL respecte le framework obligatoire (filtre ID_USER, hashtags, etc.)"
 )
 async def validate_framework(
-    sql_query: str,
-    user_id_placeholder: str = "?"
+    request: SQLFrameworkValidationRequest
 ):
     """
     Endpoint pour valider qu'une requête SQL respecte le framework obligatoire.
     Utile pour tester des requêtes SQL existantes.
     
     Args:
-        sql_query: La requête SQL à valider
-        user_id_placeholder: Placeholder pour l'ID utilisateur (par défaut "?")
+        request: Requête contenant la SQL à valider et les paramètres
         
     Returns:
         Résultat de la validation du framework
     """
     try:
-        from app.utils.query_framework import QueryFrameworkValidator
+        from app.utils.simple_framework_check import validate_framework_compliance, add_missing_framework_elements
         
-        framework_validator = QueryFrameworkValidator()
-        framework_valid, framework_message, framework_details = framework_validator.validate_query_framework(sql_query)
+        framework_compliant, framework_message = validate_framework_compliance(request.sql_query)
         
-        return {
-            "sql_query": sql_query,
-            "framework_compliant": framework_valid,
-            "message": framework_message,
-            "details": framework_details,
-            "corrected_query": framework_validator.add_required_elements(sql_query, user_id_placeholder) if not framework_valid else None
+        # Préparer les détails de validation
+        details = {
+            "has_user_filter": "ID_USER" in request.sql_query.upper(),
+            "has_depot_table": "DEPOT" in request.sql_query.upper(),
+            "has_hashtags": "#" in request.sql_query,
+            "is_select_query": request.sql_query.strip().upper().startswith("SELECT")
         }
+        
+        # Si non conforme, essayer de corriger
+        corrected_query = None
+        if not framework_compliant:
+            corrected_query = add_missing_framework_elements(request.sql_query)
+        
+        return SQLFrameworkValidationResponse(
+            sql_query=request.sql_query,
+            framework_compliant=framework_compliant,
+            message=framework_message,
+            details=details,
+            corrected_query=corrected_query
+        )
     
     except Exception as e:
         logger.error(f"Erreur lors de la validation du framework: {str(e)}")

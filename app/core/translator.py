@@ -1,4 +1,3 @@
-# app/core/translator.py - Version complète avec framework obligatoire
 import os
 import time
 import logging
@@ -9,7 +8,7 @@ from typing import Dict, Any, List, Tuple, Optional
 from app.config import get_settings
 from app.core.embedding import get_embedding
 from app.core.vector_search import find_similar_queries, check_exact_match, store_query
-from app.core.llm import generate_sql, validate_sql_query as llm_validate_sql_query, get_sql_explanation, check_query_relevance
+from app.core.llm_service import LLMService
 from app.utils.schema_loader import load_schema
 from app.utils.sql_validator import SQLValidator
 from app.utils.cache import cached, REDIS_TTL
@@ -20,6 +19,45 @@ logger = logging.getLogger(__name__)
 
 # Récupérer les paramètres de configuration
 settings = get_settings()
+
+
+def format_similar_queries_for_response(similar_queries: List[Dict[str, Any]], include_details: bool = False) -> Optional[List[Dict[str, Any]]]:
+    """
+    Formate les requêtes similaires pour l'inclusion dans la réponse API.
+    
+    Args:
+        similar_queries: Liste des requêtes similaires de Pinecone
+        include_details: Si True, inclut les détails complets (texte_complet, requete, score, id)
+        
+    Returns:
+        Liste formatée des requêtes similaires ou None si vide
+    """
+    if not similar_queries:
+        return None
+    
+    if include_details:
+        # Retourner les détails complets pour validation/debug
+        detailed_queries = []
+        for query in similar_queries:
+            metadata = query.get('metadata', {})
+            detailed_queries.append({
+                "score": round(query.get('score', 0), 4),
+                "texte_complet": metadata.get('texte_complet', ''),
+                "requete": metadata.get('requete', ''),
+                "id": query.get('id', '')
+            })
+        return detailed_queries
+    else:
+        # Format simplifié pour rétrocompatibilité
+        simplified_queries = []
+        for query in similar_queries:
+            metadata = query.get('metadata', {})
+            simplified_queries.append({
+                "score": round(query.get('score', 0), 4),
+                "query": metadata.get('texte_complet', ''),
+                "sql": metadata.get('requete', '')
+            })
+        return simplified_queries
 
 
 async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], schema: str) -> str:
@@ -59,61 +97,10 @@ Tu disposes du schéma complet de la base de données. Cette base contient des d
 - Ajoute #PERIODE# pour les requêtes avec des critères temporels
 - Place ces hashtags APRÈS le point-virgule final
 
-## STRUCTURE OBLIGATOIRE - MODÈLE À SUIVRE :
-```sql
-SELECT [colonnes]
-FROM [table_principale] [alias1]
-JOIN DEPOT [alias_depot] ON [condition_join]
-WHERE [alias_depot].ID_USER = ? 
-  AND [autres_conditions]
-[GROUP BY/ORDER BY si nécessaire]; #DEPOT_[alias_depot]# [#FACTS_[alias]#] [#PERIODE#]
-```
-
-## EXEMPLE CONCRET :
-```sql
-SELECT f.NOM, f.PRENOM, f.MNT_BRUT
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
-WHERE d.ID_USER = ? 
-  AND f.NATURE_CONTRAT = '01'
-ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
-```
-
-# STRUCTURE PRINCIPALE DE LA BASE DE DONNÉES
-- DEPOT: Table centrale contenant les informations sur les dépôts de DSN par entreprise et par période
-- FACTS: Table principale des données salariés (contrats, informations personnelles)
-- FACTS_REM: Contient les éléments de rémunération liés aux salariés
-- FACTS_ABS_FINAL: Contient les absences des salariés
-- ENTREPRISE: Contient les informations sur les entreprises/établissements
-- REFERENTIEL: Contient les valeurs de référence pour décoder les codes utilisés dans les autres tables
-
-# RELATIONS ET INFORMATIONS ESSENTIELLES
-- Un "DEPOT" correspond à une déclaration sociale pour un SIREN+NIC (SIRET) sur une période (généralement mensuelle)
-- Chaque salarié dans "FACTS" est lié à un DEPOT via ID_NUMDEPOT
-- Les types de contrats sont codifiés dans NATURE_CONTRAT:
-  * '01' = CDI
-  * '02' = CDD
-  * '03' = Intérim
-  * '07' à '08' = Stages/Alternances
-- L'âge est stocké dans la colonne "AGE" comme VARCHAR - utiliser CAST pour les tris numériques
-- La table "REFERENTIEL" permet de traduire les codes en libellés via les colonnes:
-  * RUBRIQUE_DSN: le type de code (ex: pour les types de contrat)
-  * CODE: la valeur du code (ex: '01')
-  * LIBELLE: la signification du code (ex: 'Contrat à durée indéterminée')
-
 # SCHÉMA DE LA BASE DE DONNÉES
 ```
 {formatted_schema}
 ```
-
-# CONSIGNES TECHNIQUES
-- Génère UNIQUEMENT des requêtes SELECT
-- **ATTENTION AUX DATES ET ANNÉES** : Respecte exactement l'année/période demandée
-- Utilise des alias courts et cohérents (f pour FACTS, d pour DEPOT, e pour ENTREPRISE, etc.)
-- Préfixe toujours les colonnes avec leur alias (ex: f.NOM, d.PERIODE)
-- Pour les champs numériques en VARCHAR, utilise CAST(colonne AS SIGNED/DECIMAL)
-- Utilise des JOINs explicites avec ON (jamais de jointures implicites)
-- Si la demande est hors RH, réponds "IMPOSSIBLE"
 
 # EXEMPLES DE REQUÊTES SIMILAIRES
 """
@@ -131,53 +118,6 @@ SQL: {sql_query}
 """
     
     prompt += f"""
-# EXEMPLES AVEC FRAMEWORK OBLIGATOIRE CORRECT
-
-Question: "Liste des CDI"
-SQL CORRECT:
-SELECT f.NOM, f.PRENOM, f.MATRICULE
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
-WHERE d.ID_USER = ? 
-  AND f.NATURE_CONTRAT = '01'
-ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
-
-Question: "Effectif par type de contrat"
-SQL CORRECT:
-SELECT f.NATURE_CONTRAT, COUNT(*) as effectif
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
-WHERE d.ID_USER = ?
-GROUP BY f.NATURE_CONTRAT; #DEPOT_d# #FACTS_f#
-
-Question: "Masse salariale de mai 2023"
-SQL CORRECT:
-SELECT SUM(CAST(f.MNT_BRUT AS DECIMAL(15,2))) as masse_salariale
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
-WHERE d.ID_USER = ? 
-  AND d.PERIODE = '052023'
-GROUP BY d.PERIODE; #DEPOT_d# #FACTS_f# #PERIODE#
-
-Question: "Salariés absents ce mois"
-SQL CORRECT:
-SELECT f.NOM, f.PRENOM, fa.DEBUT_ARRET, fa.MOTIF_ARRET
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
-JOIN FACTS_ABS_FINAL fa ON f.ID = fa.id_fact
-WHERE d.ID_USER = ?
-  AND fa.DEBUT_ARRET >= CURDATE() - INTERVAL 30 DAY; #DEPOT_d# #FACTS_f#
-
-# EXEMPLES DE REQUÊTES HORS SUJET QUI DOIVENT ÊTRE REJETÉES
-Question: "Qui a gagné la Ligue des Champions cette année ?"
-SQL: IMPOSSIBLE
-
-Question: "Quelle est la météo à Paris aujourd'hui ?"
-SQL: IMPOSSIBLE
-
-Question: "Donnez-moi la recette de la tarte aux pommes"
-SQL: IMPOSSIBLE
-
 # REQUÊTE À TRADUIRE
 Question: "{user_query}"
 
@@ -205,8 +145,11 @@ async def translate_nl_to_sql(
     store_result: bool = True,
     return_similar_queries: bool = False,
     user_id_placeholder: str = "?",
-    use_cache: bool = True,  # Nouveau paramètre pour contrôler le cache
-    **kwargs  # Accepter tous les arguments supplémentaires
+    use_cache: bool = True,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    include_similar_details: bool = False,  # NOUVEAU PARAMÈTRE
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Fonction principale asynchrone: traduit une requête en langage naturel en SQL 
@@ -218,8 +161,12 @@ async def translate_nl_to_sql(
         validate: Valider la requête SQL générée
         explain: Fournir une explication de la requête SQL
         store_result: Stocker la paire requête-SQL dans Pinecone
-        return_similar_queries: Inclure les requêtes similaires dans la réponse
+        return_similar_queries: Inclure les requêtes similaires dans la réponse (format simplifié)
         user_id_placeholder: Placeholder pour l'ID utilisateur (par défaut "?")
+        use_cache: Utiliser le cache Redis
+        provider: Fournisseur LLM à utiliser (openai, anthropic, google)
+        model: Modèle spécifique à utiliser
+        include_similar_details: Inclure les détails complets des vecteurs similaires (NOUVEAU)
         
     Returns:
         Dictionnaire contenant la requête SQL générée et les métadonnées associées
@@ -227,7 +174,7 @@ async def translate_nl_to_sql(
     # Chronométrer l'exécution
     start_time = time.time()
     
-    # Initialiser le résultat
+    # Initialiser le résultat avec les nouveaux champs
     result = {
         "sql": None,
         "valid": None, 
@@ -237,8 +184,11 @@ async def translate_nl_to_sql(
         "status": "error",
         "processing_time": None,
         "similar_queries": None,
+        "similar_queries_details": None,  # NOUVEAU CHAMP
         "from_cache": False,
-        "framework_compliant": False
+        "framework_compliant": False,
+        "provider": provider or settings.DEFAULT_PROVIDER,
+        "model": model
     }
     
     # Vérification préliminaire pour les opérations interdites dans la requête
@@ -260,7 +210,7 @@ async def translate_nl_to_sql(
     
     try:
         # Vérifier si la requête est pertinente pour une base de données RH
-        is_relevant = await check_query_relevance(user_query)
+        is_relevant = await LLMService.check_relevance(user_query, provider=provider, model=model)
         
         if not is_relevant:
             result["status"] = "error"
@@ -272,13 +222,11 @@ async def translate_nl_to_sql(
         if schema_path is None:
             schema_path = settings.SCHEMA_PATH
         
-        logger.info(f"Traduction de requête: '{user_query[:50]}...' (schéma: {schema_path})")
+        logger.info(f"Traduction de requête: '{user_query[:50]}...' (schéma: {schema_path}, provider: {provider or settings.DEFAULT_PROVIDER})")
         schema = await load_schema(schema_path)
         
         # Récupérer les paramètres avec valeurs par défaut
         exact_match_threshold = settings.EXACT_MATCH_THRESHOLD
-        openai_model = getattr(settings, 'OPENAI_MODEL', 'gpt-4o')
-        openai_temperature = getattr(settings, 'OPENAI_TEMPERATURE', 0.2)
         
         # Vectoriser la requête
         query_vector = await get_embedding(user_query)
@@ -286,17 +234,13 @@ async def translate_nl_to_sql(
         # Rechercher les requêtes similaires
         similar_queries = await find_similar_queries(query_vector, settings.TOP_K_RESULTS)
         
-        # Si demandé, inclure les requêtes similaires dans la réponse
+        # NOUVEAU : Stocker les détails complets des vecteurs similaires si demandé
+        if include_similar_details:
+            result["similar_queries_details"] = format_similar_queries_for_response(similar_queries, include_details=True)
+        
+        # Si demandé, inclure les requêtes similaires dans la réponse (format simplifié)
         if return_similar_queries:
-            # Simplifier les requêtes similaires pour l'API
-            simplified_queries = []
-            for q in similar_queries:
-                simplified_queries.append({
-                    "score": q["score"],
-                    "query": q["metadata"].get("texte_complet", ""),
-                    "sql": q["metadata"].get("requete", "")
-                })
-            result["similar_queries"] = simplified_queries
+            result["similar_queries"] = format_similar_queries_for_response(similar_queries, include_details=False)
         
         # Vérifier s'il y a une correspondance exacte
         exact_match = await check_exact_match(similar_queries, exact_match_threshold)
@@ -359,8 +303,14 @@ async def translate_nl_to_sql(
             # Construire le prompt avec framework obligatoire
             prompt = await build_prompt(user_query, similar_queries, schema)
             
-            # Générer le SQL
-            sql_result = await generate_sql(prompt)
+            # Utilise LLMService.generate_sql au lieu de generate_sql
+            sql_result = await LLMService.generate_sql(
+                user_query=user_query,
+                schema=schema,
+                similar_queries=similar_queries,
+                provider=provider,
+                model=model
+            )
             
             # Vérifier si la génération a retourné "IMPOSSIBLE" (hors sujet)
             if sql_result is None or sql_result.upper() == "IMPOSSIBLE":
@@ -420,22 +370,24 @@ async def translate_nl_to_sql(
             
             # Valider la requête générée si demandé (validation de cohérence supplémentaire)
             if validate:
-                # Effectuer la validation simplifiée
-                validation_result = await sql_validator.validate_sql_query(sql_result, user_query)
+                # Utilise LLMService.validate_sql_semantically au lieu de llm_validate_sql_query
+                semantic_valid, semantic_message = await LLMService.validate_sql_semantically(
+                    sql_result, 
+                    user_query, 
+                    schema,
+                    provider=provider,
+                    model=model
+                )
                 
                 # Mise à jour des résultats  
-                result["valid"] = validation_result["valid"]
-                result["validation_message"] = validation_result["message"]
+                result["valid"] = semantic_valid
+                result["validation_message"] = semantic_message
                 
                 # Ajuster le message pour inclure le respect du framework
                 if result["valid"] and framework_compliant:
-                    result["validation_message"] = f"{validation_result['message']} La requête respecte le framework obligatoire."
+                    result["validation_message"] = f"{semantic_message} La requête respecte le framework obligatoire."
                 elif result["valid"] and not framework_compliant:
-                    result["validation_message"] = f"{validation_result['message']} Attention: {framework_message}"
-                
-                # Stocker les détails supplémentaires pour le debug si nécessaire
-                if settings.DEBUG:
-                    result["validation_details"] = validation_result["details"]
+                    result["validation_message"] = f"{semantic_message} Attention: {framework_message}"
             else:
                 # Si la validation est désactivée, considérer la requête comme valide
                 result["valid"] = True
@@ -450,9 +402,13 @@ async def translate_nl_to_sql(
         
         # Obtenir une explication de la requête si demandé
         if explain and result["sql"] is not None:
-            # Toujours régénérer l'explication pour avoir une version client-friendly
-            # même si c'est une correspondance exacte
-            explanation = await get_sql_explanation(result["sql"], user_query)
+            # Utilise LLMService.explain_sql au lieu de get_sql_explanation
+            explanation = await LLMService.explain_sql(
+                result["sql"], 
+                user_query,
+                provider=provider,
+                model=model
+            )
             result["explanation"] = explanation
     
     except Exception as e:
@@ -468,7 +424,8 @@ async def translate_nl_to_sql(
         
         # Log détaillé avec informations sur le framework
         framework_status = "conforme" if result.get("framework_compliant", False) else "non conforme"
-        logger.info(f"Traduction terminée en {processing_time:.3f}s (statut: {result['status']}, framework: {framework_status})")
+        similar_count = len(result.get("similar_queries_details", [])) if result.get("similar_queries_details") else 0
+        logger.info(f"Traduction terminée en {processing_time:.3f}s (statut: {result['status']}, framework: {framework_status}, vecteurs similaires: {similar_count})")
     
     return result
 
@@ -482,13 +439,14 @@ async def health_check() -> Dict[str, Any]:
     """
     from app.core.embedding import check_embedding_service
     from app.core.vector_search import check_pinecone_service
-    from app.core.llm import check_openai_service
     from app.utils.cache import get_redis_client
     
     # Vérifier les services
     embedding_status = await check_embedding_service()
     pinecone_status = await check_pinecone_service()
-    openai_status = await check_openai_service()
+    
+    # Utilise LLMService.check_services_health au lieu de check_openai_service
+    llm_status = await LLMService.check_services_health()
     
     # Vérifier Redis
     redis_status = {"status": "disabled"}
@@ -510,7 +468,7 @@ async def health_check() -> Dict[str, Any]:
     all_ok = (
         embedding_status.get("status") == "ok" and
         pinecone_status.get("status") == "ok" and
-        openai_status.get("status") == "ok" and
+        llm_status.get("status") == "ok" and
         (redis_status.get("status") in ["ok", "disabled"])
     )
     
@@ -520,7 +478,7 @@ async def health_check() -> Dict[str, Any]:
         "services": {
             "embedding": embedding_status,
             "pinecone": pinecone_status,
-            "openai": openai_status,
+            "llm": llm_status,
             "redis": redis_status
         }
     }
