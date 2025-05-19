@@ -1,4 +1,4 @@
-# app/config.py - Solution directe pour les problèmes de Pydantic v2
+# app/config.py - Version corrigée complète
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import Optional, List
@@ -13,18 +13,36 @@ class Settings(BaseSettings):
     # Clés API
     PINECONE_API_KEY: str = Field(..., env="PINECONE_API_KEY")
     OPENAI_API_KEY: str = Field(..., env="OPENAI_API_KEY")
+    ANTHROPIC_API_KEY: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    GOOGLE_API_KEY: Optional[str] = Field(None, env="GOOGLE_API_KEY")
     
     # Paramètres de Pinecone
     PINECONE_INDEX_NAME: str = Field("nl2sql", env="PINECONE_INDEX_NAME")
     PINECONE_ENVIRONMENT: str = Field("gcp-starter", env="PINECONE_ENVIRONMENT")
     
     # Paramètres du modèle d'embedding
-    EMBEDDING_MODEL: str = Field("all-mpnet-base-v2", env="EMBEDDING_MODEL")
+    EMBEDDING_MODEL: str = Field("all-MiniLM-L6-v2", env="EMBEDDING_MODEL")
     
-    # Paramètres OpenAI
-    OPENAI_MODEL: str = Field("gpt-4o", env="OPENAI_MODEL")
-    OPENAI_TEMPERATURE: float = Field(0.2, env="OPENAI_TEMPERATURE")
-    OPENAI_TIMEOUT: int = Field(30, env="OPENAI_TIMEOUT")
+    # Paramètres LLM (adaptés à votre .env)
+    DEFAULT_PROVIDER: str = Field("openai", env="DEFAULT_PROVIDER")
+    DEFAULT_OPENAI_MODEL: str = Field("gpt-4o", env="DEFAULT_OPENAI_MODEL")
+    DEFAULT_ANTHROPIC_MODEL: str = Field("claude-3-opus-20240229", env="DEFAULT_ANTHROPIC_MODEL")
+    DEFAULT_GOOGLE_MODEL: str = Field("gemini-pro", env="DEFAULT_GOOGLE_MODEL")
+    LLM_TEMPERATURE: float = Field(0.2, env="LLM_TEMPERATURE")
+    LLM_TIMEOUT: int = Field(30, env="LLM_TIMEOUT")
+    
+    # Alias pour la compatibilité avec l'ancien code
+    @property
+    def OPENAI_MODEL(self) -> str:
+        return self.DEFAULT_OPENAI_MODEL
+    
+    @property
+    def OPENAI_TEMPERATURE(self) -> float:
+        return self.LLM_TEMPERATURE
+    
+    @property
+    def OPENAI_TIMEOUT(self) -> int:
+        return self.LLM_TIMEOUT
     
     # Paramètres de traduction
     EXACT_MATCH_THRESHOLD: float = Field(0.95, env="EXACT_MATCH_THRESHOLD")
@@ -37,35 +55,35 @@ class Settings(BaseSettings):
     # Sécurité
     API_KEY: Optional[str] = Field(None, env="API_KEY")
     API_KEY_NAME: str = Field("X-API-Key", env="API_KEY_NAME")
+    ADMIN_SECRET: Optional[str] = Field(None, env="ADMIN_SECRET")
     ALLOWED_HOSTS: List[str] = Field(["*"], env="ALLOWED_HOSTS")
-    SQL_READ_ONLY: bool = Field(True, env="SQL_READ_ONLY")  # Restreint aux requêtes SELECT uniquement
+    SQL_READ_ONLY: bool = Field(True, env="SQL_READ_ONLY")
     
     # Cache Redis
     REDIS_URL: Optional[str] = Field(None, env="REDIS_URL")
-    REDIS_TTL: int = Field(3600, env="REDIS_TTL")  # 1 heure par défaut
+    REDIS_TTL: int = Field(3600, env="REDIS_TTL")
     CACHE_ENABLED: bool = Field(True, env="CACHE_ENABLED")
     
     # Paramètres serveur
     DEBUG: bool = Field(False, env="DEBUG")
     
-    # Variables supplémentaires trouvées dans le fichier .env
-    ADMIN_SECRET: Optional[str] = Field(None, env="ADMIN_SECRET")
+    # Fonctionnalités avancées
     METRICS_ENABLED: bool = Field(False, env="METRICS_ENABLED")
     
-    # Validateur pour ALLOWED_HOSTS pour supporter le format avec virgules
     @classmethod
-    def validate_allowed_hosts(cls, v):
-        if isinstance(v, str):
-            return [host.strip() for host in v.split(',')]
-        return v
-    
-    model_config = {
-        "env_file": ".env",
-        "case_sensitive": True,
-        "env_file_encoding": "utf-8",
-        # Si vous voulez aussi ignorer d'autres champs inconnus dans le futur
-        "extra": "ignore"  # Permet les champs supplémentaires non déclarés
-    }
+    def parse_env_var(cls, field_name: str, raw_val: str):
+        """Parse les variables d'environnement personnalisées"""
+        if field_name == 'ALLOWED_HOSTS':
+            if isinstance(raw_val, str):
+                return [host.strip() for host in raw_val.split(',')]
+            return raw_val
+        return cls.__config__.json_loads(raw_val)
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
+        env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore les champs supplémentaires non déclarés
 
 
 @lru_cache()

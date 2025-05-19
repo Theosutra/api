@@ -1,6 +1,17 @@
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
+from enum import Enum, auto
 import re
+
+
+class LLMProvider(Enum):
+    """
+    Énumération des fournisseurs de modèles de langage.
+    """
+    OPENAI = auto()
+    ANTHROPIC = auto()
+    AZURE = auto()
+    GOOGLE = auto()
 
 
 class SQLTranslationRequest(BaseModel):
@@ -158,3 +169,50 @@ class HealthCheckResponse(BaseModel):
                 }
             }
         }
+
+
+class LLMRequest(BaseModel):
+    """
+    Modèle générique pour les requêtes envoyées à un service de LLM.
+    """
+    prompt: str = Field(..., description="Prompt à envoyer au modèle de langage")
+    provider: LLMProvider = Field(
+        default=LLMProvider.OPENAI, 
+        description="Fournisseur du modèle de langage"
+    )
+    model: Optional[str] = Field(
+        None, 
+        description="Nom spécifique du modèle (si différent du modèle par défaut du fournisseur)"
+    )
+    temperature: Optional[float] = Field(
+        None, 
+        description="Température pour la génération", 
+        ge=0.0, 
+        le=1.0
+    )
+    max_tokens: Optional[int] = Field(
+        None, 
+        description="Nombre maximum de tokens à générer", 
+        ge=1, 
+        le=4096
+    )
+
+
+class LLMResponse(BaseModel):
+    """
+    Modèle générique pour les réponses des services de LLM.
+    """
+    content: str = Field(..., description="Contenu généré par le modèle")
+    tokens_used: Optional[int] = Field(
+        None, 
+        description="Nombre de tokens utilisés"
+    )
+    provider: LLMProvider = Field(
+        ..., 
+        description="Fournisseur du modèle de langage"
+    )
+    model: str = Field(..., description="Modèle utilisé")
+    processing_time: Optional[float] = Field(
+        None, 
+        description="Temps de traitement"
+    )

@@ -1,4 +1,4 @@
-# app/utils/cache.py
+# app/utils/cache.py - Version corrigée
 import json
 import logging
 import hashlib
@@ -58,10 +58,13 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
     Returns:
         Clé de cache unique
     """
+    # Filtrer les arguments qui ne doivent pas être dans la clé de cache
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['store_result', 'provider']}
+    
     # Convertir les arguments en chaîne JSON
     key_data = {
         "args": args,
-        "kwargs": {k: v for k, v in kwargs.items() if k != "store_result"}
+        "kwargs": filtered_kwargs
     }
     
     # Générer un hash pour les données
@@ -190,6 +193,7 @@ async def cache_pattern_invalidate(pattern: str) -> int:
 def cached(ttl: int = REDIS_TTL):
     """
     Décorateur pour mettre en cache les résultats d'une fonction asynchrone.
+    Respecte le paramètre use_cache passé dans les kwargs.
     
     Args:
         ttl: Durée de vie en secondes (par défaut 1 heure)
@@ -200,8 +204,15 @@ def cached(ttl: int = REDIS_TTL):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            if not CACHE_ENABLED:
-                return await func(*args, **kwargs)
+            # Vérifier si le cache est activé globalement ET pour cette requête
+            use_cache_for_request = kwargs.get('use_cache', True)
+            
+            if not CACHE_ENABLED or not use_cache_for_request:
+                # Cache désactivé globalement ou pour cette requête spécifique
+                result = await func(*args, **kwargs)
+                if isinstance(result, dict):
+                    result["from_cache"] = False
+                return result
             
             # Générer la clé de cache
             prefix = f"{func.__module__}:{func.__name__}"
@@ -230,6 +241,10 @@ def cached(ttl: int = REDIS_TTL):
                 
                 # Mettre en cache
                 await cache_set(cache_key, result, ttl)
+            else:
+                # Pas de mise en cache, mais indiquer que ce n'est pas du cache
+                if isinstance(result, dict):
+                    result["from_cache"] = False
             
             return result
         

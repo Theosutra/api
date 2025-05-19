@@ -1,0 +1,32 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app/schemas:/app/app/schemas
+    depends_on:
+      - redis
+    env_file:
+      - ./.env
+    networks:
+      - nl2sql-network
+
+  redis:
+    image: redis:alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    networks:
+      - nl2sql-network
+
+networks:
+  nl2sql-network:
+    driver: bridge
+
+volumes:
+  redis-data:

@@ -1,9 +1,9 @@
-# app/core/translator.py - Avec vérification de pertinence
+# app/core/translator.py - Version complète avec framework obligatoire
 import os
 import time
 import logging
 import re
-import aiohttp  # Assurez-vous que cette importation existe déjà
+import aiohttp
 from typing import Dict, Any, List, Tuple, Optional
 
 from app.config import get_settings
@@ -13,6 +13,7 @@ from app.core.llm import generate_sql, validate_sql_query as llm_validate_sql_qu
 from app.utils.schema_loader import load_schema
 from app.utils.sql_validator import SQLValidator
 from app.utils.cache import cached, REDIS_TTL
+from app.utils.simple_framework_check import validate_framework_compliance, add_missing_framework_elements
 
 # Configuration du logger
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ settings = get_settings()
 
 async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], schema: str) -> str:
     """
-    Construit un prompt optimisé pour GPT-4o pour la traduction NL2SQL.
+    Construit un prompt optimisé pour GPT-4o pour la traduction NL2SQL avec framework obligatoire.
     
     Args:
         user_query: La requête utilisateur en langage naturel
@@ -33,14 +34,50 @@ async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], s
     Returns:
         Le prompt formaté pour le LLM
     """
-    # Pas besoin de formater le schéma Markdown - on l'utilise tel quel
-    # puisque le SQLValidator simplifié ne fait pas d'analyse du schéma
     formatted_schema = schema
         
     prompt = f"""Tu es un expert SQL chevronné spécialisé dans la traduction de questions en langage naturel en requêtes SQL performantes et optimisées pour le reporting RH.
 
 # CONTEXTE
 Tu disposes du schéma complet de la base de données. Cette base contient des données RH et sociales issues de Déclarations Sociales Nominatives (DSN).
+
+# RÈGLES OBLIGATOIRES - À RESPECTER ABSOLUMENT DANS CHAQUE REQUÊTE
+
+## 1. FILTRE UTILISATEUR OBLIGATOIRE
+- CHAQUE requête SQL DOIT OBLIGATOIREMENT contenir : WHERE [alias_depot].ID_USER = ?
+- Ce filtre est OBLIGATOIRE pour la sécurité et les autorisations utilisateur
+- Exemple : WHERE d.ID_USER = ? (si l'alias de DEPOT est 'd')
+
+## 2. TABLE DEPOT TOUJOURS REQUISE
+- La table DEPOT doit TOUJOURS être présente dans chaque requête
+- Elle peut être jointe directement ou indirectement via FACTS
+- Utilise un alias court comme 'd' pour DEPOT
+
+## 3. HASHTAGS OBLIGATOIRES EN FIN DE REQUÊTE
+- Ajoute #DEPOT_[alias]# où [alias] est l'alias de la table DEPOT
+- Ajoute #FACTS_[alias]# si tu utilises la table FACTS  
+- Ajoute #PERIODE# pour les requêtes avec des critères temporels
+- Place ces hashtags APRÈS le point-virgule final
+
+## STRUCTURE OBLIGATOIRE - MODÈLE À SUIVRE :
+```sql
+SELECT [colonnes]
+FROM [table_principale] [alias1]
+JOIN DEPOT [alias_depot] ON [condition_join]
+WHERE [alias_depot].ID_USER = ? 
+  AND [autres_conditions]
+[GROUP BY/ORDER BY si nécessaire]; #DEPOT_[alias_depot]# [#FACTS_[alias]#] [#PERIODE#]
+```
+
+## EXEMPLE CONCRET :
+```sql
+SELECT f.NOM, f.PRENOM, f.MNT_BRUT
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
+WHERE d.ID_USER = ? 
+  AND f.NATURE_CONTRAT = '01'
+ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
+```
 
 # STRUCTURE PRINCIPALE DE LA BASE DE DONNÉES
 - DEPOT: Table centrale contenant les informations sur les dépôts de DSN par entreprise et par période
@@ -69,118 +106,67 @@ Tu disposes du schéma complet de la base de données. Cette base contient des d
 {formatted_schema}
 ```
 
-# CONSIGNES IMPORTANTES
-- Cette base de données contient UNIQUEMENT des informations RH et sociales. Elle ne contient PAS d'informations sur le sport, la météo, la politique, ou d'autres sujets non liés aux RH.
-- Si la demande ne concerne pas les RH, réponds "IMPOSSIBLE" car la requête est hors sujet.
-- Génère UNIQUEMENT des requêtes SELECT (aucune opération d'écriture n'est autorisée)
-- Utilise des ALIAS explicites et cohérents (ex: f pour facts, d pour depot, e pour entreprise, r pour referentiel)
-- Préfixe chaque colonne par son alias de table (ex: f.NATURE_CONTRAT, d.PERIODE)
-- Pour les champs numériques stockés en VARCHAR, utilise CAST(colonne AS SIGNED) ou CAST(colonne AS DECIMAL) pour les calculs et tris
-- Utilise toujours des JOINs explicites avec la clause ON (jamais de jointures implicites)
-- Pour les jointures avec la table REFERENTIEL, fais attention à bien filtrer sur RUBRIQUE_DSN et CODE
-- Utilise des commentaires /* code = libellé */ pour expliquer les codes dans les conditions WHERE
-- Lorsqu'une requête concerne des périodes, la colonne PERIODE dans DEPOT est au format 'MMAAAA' (utilise LEFT, RIGHT, SUBSTRING)
+# CONSIGNES TECHNIQUES
+- Génère UNIQUEMENT des requêtes SELECT
+- **ATTENTION AUX DATES ET ANNÉES** : Respecte exactement l'année/période demandée
+- Utilise des alias courts et cohérents (f pour FACTS, d pour DEPOT, e pour ENTREPRISE, etc.)
+- Préfixe toujours les colonnes avec leur alias (ex: f.NOM, d.PERIODE)
+- Pour les champs numériques en VARCHAR, utilise CAST(colonne AS SIGNED/DECIMAL)
+- Utilise des JOINs explicites avec ON (jamais de jointures implicites)
+- Si la demande est hors RH, réponds "IMPOSSIBLE"
 
-# EXEMPLES DE REQUÊTES PERTINENTES
+# EXEMPLES DE REQUÊTES SIMILAIRES
 """
     
-    # Ajouter les exemples de requêtes similaires avec un format amélioré
+    # Ajouter les exemples avec le framework obligatoire appliqué
     for i, query in enumerate(similar_queries, 1):
         metadata = query['metadata']
-        prompt += f"""EXEMPLE {i} - Pertinence: {query['score']:.2f}
-Question: {metadata.get('texte_complet', metadata.get('description', 'N/A'))}
-SQL: {metadata.get('requete', 'N/A')}
+        query_text = metadata.get('texte_complet', metadata.get('description', 'N/A'))
+        sql_query = metadata.get('requete', 'N/A')
+        
+        prompt += f"""EXEMPLE {i} - Score: {query['score']:.2f}
+Question: {query_text}
+SQL: {sql_query}
 
 """
     
-    # Ajouter des exemples de traduction qui aident à comprendre les particularités du schéma
-    prompt += f"""# EXEMPLES DE REQUÊTES SPÉCIFIQUES
-Question: "Liste des CDI dans l'entreprise"
-SQL: 
-SELECT 
-    f.ID, f.MATRICULE, f.NOM, f.PRENOM, e.DENOMINATION AS nom_entreprise
-FROM 
-    FACTS f
-JOIN 
-    DEPOT d ON f.ID_NUMDEPOT = d.ID
-LEFT JOIN 
-    ENTREPRISE e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
-WHERE 
-    f.NATURE_CONTRAT = '01' /* 01 = CDI */
+    prompt += f"""
+# EXEMPLES AVEC FRAMEWORK OBLIGATOIRE CORRECT
 
-Question: "Nombre d'employés par tranche d'âge"
-SQL:
-SELECT 
-    CASE 
-        WHEN CAST(f.AGE AS UNSIGNED) < 30 THEN 'Moins de 30 ans'
-        WHEN CAST(f.AGE AS UNSIGNED) BETWEEN 30 AND 50 THEN '30-50 ans'
-        ELSE 'Plus de 50 ans'
-    END AS tranche_age, 
-    COUNT(*) AS nombre_employes 
-FROM 
-    FACTS f 
-GROUP BY 
-    tranche_age
-ORDER BY 
-    CASE tranche_age
-        WHEN 'Moins de 30 ans' THEN 1
-        WHEN '30-50 ans' THEN 2
-        ELSE 3
-    END
+Question: "Liste des CDI"
+SQL CORRECT:
+SELECT f.NOM, f.PRENOM, f.MATRICULE
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
+WHERE d.ID_USER = ? 
+  AND f.NATURE_CONTRAT = '01'
+ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
 
-Question: "Répartition des salariés par type de contrat"
-SQL:
-SELECT 
-    COALESCE(r.LIBELLE, 'Non renseigné') AS type_contrat, 
-    COUNT(*) AS nombre 
-FROM 
-    FACTS f 
-LEFT JOIN 
-    REFERENTIEL r ON r.CODE = f.NATURE_CONTRAT AND r.RUBRIQUE_DSN LIKE '%NATURE_CONTRAT%'
-GROUP BY 
-    COALESCE(r.LIBELLE, 'Non renseigné')
-ORDER BY 
-    nombre DESC
+Question: "Effectif par type de contrat"
+SQL CORRECT:
+SELECT f.NATURE_CONTRAT, COUNT(*) as effectif
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
+WHERE d.ID_USER = ?
+GROUP BY f.NATURE_CONTRAT; #DEPOT_d# #FACTS_f#
 
-Question: "Masse salariale par établissement pour mai 2023"
-SQL:
-SELECT 
-    d.SIREN,
-    d.nic,
-    e.DENOMINATION AS nom_entreprise,
-    SUM(CAST(f.MNT_BRUT AS DECIMAL(15,2))) AS masse_salariale_brute
-FROM 
-    FACTS f
-JOIN 
-    DEPOT d ON f.ID_NUMDEPOT = d.ID
-LEFT JOIN 
-    ENTREPRISE e ON d.SIREN = e.SIREN AND d.nic = e.ETAB_NIC
-WHERE 
-    d.PERIODE = '052023' /* Format MMAAAA pour mai 2023 */
-GROUP BY 
-    d.SIREN, d.nic, e.DENOMINATION
-ORDER BY 
-    masse_salariale_brute DESC
+Question: "Masse salariale de mai 2023"
+SQL CORRECT:
+SELECT SUM(CAST(f.MNT_BRUT AS DECIMAL(15,2))) as masse_salariale
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
+WHERE d.ID_USER = ? 
+  AND d.PERIODE = '052023'
+GROUP BY d.PERIODE; #DEPOT_d# #FACTS_f# #PERIODE#
 
-Question: "Taux d'absentéisme par département"
-SQL:
-SELECT 
-    f.DEPARTEMENT,
-    COUNT(DISTINCT f.ID) AS nb_salaries,
-    COUNT(DISTINCT fa.id_fact) AS nb_salaries_absents,
-    ROUND((COUNT(DISTINCT fa.id_fact) / COUNT(DISTINCT f.ID)) * 100, 2) AS taux_absenteisme
-FROM 
-    FACTS f
-JOIN 
-    DEPOT d ON f.ID_NUMDEPOT = d.ID
-LEFT JOIN 
-    FACTS_ABS_FINAL fa ON f.ID = fa.id_fact
-GROUP BY 
-    f.DEPARTEMENT
-HAVING 
-    f.DEPARTEMENT IS NOT NULL AND f.DEPARTEMENT != ''
-ORDER BY 
-    taux_absenteisme DESC
+Question: "Salariés absents ce mois"
+SQL CORRECT:
+SELECT f.NOM, f.PRENOM, fa.DEBUT_ARRET, fa.MOTIF_ARRET
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID
+JOIN FACTS_ABS_FINAL fa ON f.ID = fa.id_fact
+WHERE d.ID_USER = ?
+  AND fa.DEBUT_ARRET >= CURDATE() - INTERVAL 30 DAY; #DEPOT_d# #FACTS_f#
 
 # EXEMPLES DE REQUÊTES HORS SUJET QUI DOIVENT ÊTRE REJETÉES
 Question: "Qui a gagné la Ligue des Champions cette année ?"
@@ -192,20 +178,20 @@ SQL: IMPOSSIBLE
 Question: "Donnez-moi la recette de la tarte aux pommes"
 SQL: IMPOSSIBLE
 
-# DEMANDE À TRADUIRE EN SQL
-"{user_query}"
+# REQUÊTE À TRADUIRE
+Question: "{user_query}"
 
-# INSTRUCTIONS
-1. Analyse attentivement la demande pour comprendre précisément les besoins
-2. Vérifie si la demande concerne bien les RH et cette base de données (sinon réponds IMPOSSIBLE)
-3. Identifie les tables et champs pertinents dans le schéma
-4. Crée une requête SQL optimisée qui répond exactement à la question
-5. Vérifie que toutes les tables et colonnes existent et que tous les alias sont cohérents
-6. Assure-toi que les jointures sont correctement définies avec la condition ON
-7. Ajoute des commentaires pour expliquer les codes et choix techniques importants
-8. Retourne UNIQUEMENT la requête SQL sans aucune explication autour
+# INSTRUCTIONS FINALES
+1. Analyse la question pour comprendre les besoins
+2. Si la question ne concerne pas la RH, réponds "IMPOSSIBLE"
+3. Identifie les tables nécessaires du schéma
+4. Construis la requête en respectant OBLIGATOIREMENT :
+   - Table DEPOT présente avec alias
+   - Filtre WHERE [alias_depot].ID_USER = ?
+   - Hashtags en fin : #DEPOT_[alias]# et autres selon contexte
+5. Retourne UNIQUEMENT la requête SQL finale
 
-SQL Query:"""
+SQL:"""
     
     return prompt
 
@@ -217,11 +203,14 @@ async def translate_nl_to_sql(
     validate: bool = True, 
     explain: bool = True,
     store_result: bool = True,
-    return_similar_queries: bool = False
+    return_similar_queries: bool = False,
+    user_id_placeholder: str = "?",
+    use_cache: bool = True,  # Nouveau paramètre pour contrôler le cache
+    **kwargs  # Accepter tous les arguments supplémentaires
 ) -> Dict[str, Any]:
     """
-    Fonction principale asynchrone: traduit une requête en langage naturel en SQL.
-    Version adaptée pour fonctionner avec le SQLValidator simplifié et la vérification de pertinence.
+    Fonction principale asynchrone: traduit une requête en langage naturel en SQL 
+    avec validation du framework obligatoire.
     
     Args:
         user_query: La requête en langage naturel à traduire
@@ -230,6 +219,7 @@ async def translate_nl_to_sql(
         explain: Fournir une explication de la requête SQL
         store_result: Stocker la paire requête-SQL dans Pinecone
         return_similar_queries: Inclure les requêtes similaires dans la réponse
+        user_id_placeholder: Placeholder pour l'ID utilisateur (par défaut "?")
         
     Returns:
         Dictionnaire contenant la requête SQL générée et les métadonnées associées
@@ -247,7 +237,8 @@ async def translate_nl_to_sql(
         "status": "error",
         "processing_time": None,
         "similar_queries": None,
-        "from_cache": False  # Indicateur pour la mise en cache
+        "from_cache": False,
+        "framework_compliant": False
     }
     
     # Vérification préliminaire pour les opérations interdites dans la requête
@@ -268,7 +259,7 @@ async def translate_nl_to_sql(
         return result
     
     try:
-        # NOUVELLE ÉTAPE: Vérifier si la requête est pertinente pour une base de données RH
+        # Vérifier si la requête est pertinente pour une base de données RH
         is_relevant = await check_query_relevance(user_query)
         
         if not is_relevant:
@@ -284,13 +275,10 @@ async def translate_nl_to_sql(
         logger.info(f"Traduction de requête: '{user_query[:50]}...' (schéma: {schema_path})")
         schema = await load_schema(schema_path)
         
-        # Log pour le débogage de la taille du schéma
-        logger.debug(f"Longueur du schéma chargé: {len(schema)} caractères")
-        
-        # Récupérer les paramètres
+        # Récupérer les paramètres avec valeurs par défaut
         exact_match_threshold = settings.EXACT_MATCH_THRESHOLD
-        openai_model = settings.OPENAI_MODEL
-        openai_temperature = settings.OPENAI_TEMPERATURE
+        openai_model = getattr(settings, 'OPENAI_MODEL', 'gpt-4o')
+        openai_temperature = getattr(settings, 'OPENAI_TEMPERATURE', 0.2)
         
         # Vectoriser la requête
         query_vector = await get_embedding(user_query)
@@ -316,7 +304,39 @@ async def translate_nl_to_sql(
         if exact_match:
             logger.info(f"Correspondance exacte trouvée pour la requête")
             
-            # Valider aussi les correspondances exactes avec le validateur simplifié
+            # NOUVELLE VALIDATION : Vérifier la cohérence sémantique
+            # Extraire les années de la requête utilisateur et de la requête trouvée
+            user_years = re.findall(r'\b(20\d{2})\b', user_query)
+            sql_years = re.findall(r'\b(20\d{2})\b', exact_match)
+            
+            # Si des années sont mentionnées, vérifier qu'elles correspondent
+            if user_years and sql_years and user_years[0] != sql_years[0]:
+                logger.warning(f"Correspondance exacte avec année différente: {user_years[0]} vs {sql_years[0]}")
+                # Ne pas utiliser cette correspondance, continuer avec la génération
+                exact_match = None
+        
+        if exact_match:
+            # Valider le framework de la correspondance exacte
+            framework_compliant, framework_message = validate_framework_compliance(exact_match)
+            
+            if not framework_compliant:
+                # Essayer de corriger automatiquement
+                logger.warning(f"Correspondance exacte non conforme au framework: {framework_message}")
+                corrected_query = add_missing_framework_elements(exact_match)
+                framework_compliant, framework_message = validate_framework_compliance(corrected_query)
+                
+                if framework_compliant:
+                    exact_match = corrected_query
+                    logger.info(f"Correspondance exacte corrigée avec succès")
+                else:
+                    logger.error(f"Impossible de corriger la correspondance exacte: {framework_message}")
+                    result["valid"] = False
+                    result["validation_message"] = f"Correspondance exacte non conforme: {framework_message}"
+                    result["status"] = "error"
+                    result["processing_time"] = time.time() - start_time
+                    return result
+            
+            # Valider aussi les correspondances exactes avec le validateur SQL
             sql_validator = SQLValidator(schema_content=schema, schema_path=schema_path)
             
             # Vérifier si la requête contient des opérations destructives
@@ -326,22 +346,21 @@ async def translate_nl_to_sql(
                 result["valid"] = False
                 result["validation_message"] = destructive_message
                 result["status"] = "error"
+                result["processing_time"] = time.time() - start_time
                 return result
             
             result["sql"] = exact_match
             result["valid"] = True
-            result["validation_message"] = "Requête trouvée directement dans la base de connaissances."
+            result["validation_message"] = "Requête trouvée directement dans la base de connaissances et conforme au framework."
             result["is_exact_match"] = True
             result["status"] = "success"
+            result["framework_compliant"] = True
         else:
-            # Construire le prompt
+            # Construire le prompt avec framework obligatoire
             prompt = await build_prompt(user_query, similar_queries, schema)
             
-            # Log pour le débogage du prompt
-            logger.debug(f"Longueur du prompt envoyé à OpenAI: {len(prompt)} caractères")
-            
             # Générer le SQL
-            sql_result = await generate_sql(prompt, openai_model, openai_temperature)
+            sql_result = await generate_sql(prompt)
             
             # Vérifier si la génération a retourné "IMPOSSIBLE" (hors sujet)
             if sql_result is None or sql_result.upper() == "IMPOSSIBLE":
@@ -349,6 +368,7 @@ async def translate_nl_to_sql(
                 result["valid"] = False
                 result["validation_message"] = "Cette demande ne semble pas concerner les ressources humaines ou est impossible à traduire en SQL avec le schéma fourni."
                 result["status"] = "error"
+                result["processing_time"] = time.time() - start_time
                 return result
             
             # Vérifier les réponses spéciales du LLM
@@ -358,9 +378,33 @@ async def translate_nl_to_sql(
                 result["sql"] = None
                 result["validation_message"] = "Votre demande concerne une opération d'écriture (INSERT, UPDATE, DELETE, etc.) qui n'est pas autorisée. Cette API est en lecture seule et ne peut exécuter que des requêtes de consultation (SELECT)."
                 result["status"] = "error"
+                result["processing_time"] = time.time() - start_time
                 return result
             
-            # Validation simplifiée qui vérifie uniquement la sécurité
+            # NOUVELLE VALIDATION : Vérifier le framework obligatoire
+            framework_compliant, framework_message = validate_framework_compliance(sql_result)
+            
+            if not framework_compliant:
+                logger.warning(f"Requête non conforme au framework: {framework_message}")
+                # Essayer de corriger automatiquement
+                corrected_query = add_missing_framework_elements(sql_result)
+                framework_compliant, framework_message = validate_framework_compliance(corrected_query)
+                
+                if framework_compliant:
+                    logger.info(f"Requête corrigée avec succès")
+                    sql_result = corrected_query
+                    result["validation_message"] = f"Requête générée et corrigée automatiquement pour respecter le framework obligatoire."
+                else:
+                    logger.error(f"Impossible de corriger la requête: {framework_message}")
+                    result["valid"] = False
+                    result["validation_message"] = f"Requête non conforme au framework obligatoire: {framework_message}"
+                    result["status"] = "error"
+                    result["processing_time"] = time.time() - start_time
+                    return result
+            
+            result["framework_compliant"] = framework_compliant
+            
+            # Validation de sécurité (opérations destructives)
             sql_validator = SQLValidator(schema_content=schema, schema_path=schema_path)
             is_destructive, destructive_message = sql_validator.check_destructive_operations(sql_result)
             
@@ -369,18 +413,25 @@ async def translate_nl_to_sql(
                 result["valid"] = False
                 result["validation_message"] = destructive_message
                 result["status"] = "error"
+                result["processing_time"] = time.time() - start_time
                 return result
                 
             result["sql"] = sql_result
             
-            # Valider la requête générée si demandé
+            # Valider la requête générée si demandé (validation de cohérence supplémentaire)
             if validate:
                 # Effectuer la validation simplifiée
                 validation_result = await sql_validator.validate_sql_query(sql_result, user_query)
                 
-                # Mise à jour des résultats
+                # Mise à jour des résultats  
                 result["valid"] = validation_result["valid"]
                 result["validation_message"] = validation_result["message"]
+                
+                # Ajuster le message pour inclure le respect du framework
+                if result["valid"] and framework_compliant:
+                    result["validation_message"] = f"{validation_result['message']} La requête respecte le framework obligatoire."
+                elif result["valid"] and not framework_compliant:
+                    result["validation_message"] = f"{validation_result['message']} Attention: {framework_message}"
                 
                 # Stocker les détails supplémentaires pour le debug si nécessaire
                 if settings.DEBUG:
@@ -388,9 +439,9 @@ async def translate_nl_to_sql(
             else:
                 # Si la validation est désactivée, considérer la requête comme valide
                 result["valid"] = True
-                result["validation_message"] = "Validation désactivée. La requête est considérée comme valide."
+                result["validation_message"] = "Validation désactivée. La requête est considérée comme valide et respecte le framework obligatoire."
             
-            # Toujours considérer la requête comme valide tant qu'elle n'est pas destructive
+            # Toujours considérer la requête comme valide tant qu'elle respecte le framework et n'est pas destructive
             result["status"] = "success"
             
             # Si la requête est valide et qu'on doit la stocker, on l'ajoute à Pinecone
@@ -399,7 +450,9 @@ async def translate_nl_to_sql(
         
         # Obtenir une explication de la requête si demandé
         if explain and result["sql"] is not None:
-            explanation = await get_sql_explanation(result["sql"], user_query, openai_model)
+            # Toujours régénérer l'explication pour avoir une version client-friendly
+            # même si c'est une correspondance exacte
+            explanation = await get_sql_explanation(result["sql"], user_query)
             result["explanation"] = explanation
     
     except Exception as e:
@@ -413,7 +466,9 @@ async def translate_nl_to_sql(
         processing_time = end_time - start_time
         result["processing_time"] = round(processing_time, 3)
         
-        logger.info(f"Traduction terminée en {processing_time:.3f}s (statut: {result['status']})")
+        # Log détaillé avec informations sur le framework
+        framework_status = "conforme" if result.get("framework_compliant", False) else "non conforme"
+        logger.info(f"Traduction terminée en {processing_time:.3f}s (statut: {result['status']}, framework: {framework_status})")
     
     return result
 

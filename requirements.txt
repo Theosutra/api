@@ -18,11 +18,15 @@ sentence-transformers>=2.2.2
 torch>=2.0.0
 
 # Pour la recherche vectorielle
-pinecone-client>=2.2.0
+pinecone>=6.0.2
 
-# Pour les requêtes HTTP asynchrones et OpenAI
+# Pour les requêtes HTTP asynchrones
 aiohttp>=3.8.4
-openai>=1.0.0
+
+# Pour les différents fournisseurs LLM
+openai>=1.0.0          # OpenAI API
+anthropic>=0.5.0       # Anthropic API (Claude)
+google-generativeai>=0.3.0  # Google Gemini API
 
 # Pour la journalisation et le débogage
 loguru>=0.7.0

@@ -11,9 +11,9 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-_Une API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées_
+_Une API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées avec framework de sécurité obligatoire_
 
-[Installation](#installation) • [Utilisation](#utilisation) • [Architecture](#architecture) • [Configuration](#configuration) • [FAQ](#faq) • [Contact](#contact)
+[Installation](#installation) • [Utilisation](#utilisation) • [Framework Obligatoire](#framework-obligatoire) • [Configuration](#configuration) • [FAQ](#faq) • [Contact](#contact)
 
 </div>
 
@@ -22,16 +22,17 @@ _Une API intelligente qui traduit vos questions en langage naturel en requêtes 
 ## 🌟 Fonctionnalités
 
 - 🔄 **Traduction Intuitive** - Transformez des questions en langage naturel en SQL performant
+- 🛡️ **Framework de Sécurité Obligatoire** - Chaque requête inclut automatiquement les filtres utilisateur nécessaires
 - 🧠 **Apprentissage Continu** - Le système s'améliore au fur et à mesure de son utilisation
 - 🔍 **Recherche Vectorielle** - Utilisation de Pinecone pour trouver des requêtes similaires
-- 🤖 **Intelligence Artificielle** - Exploitation des modèles OpenAI pour la génération SQL
+- 🤖 **Intelligence Artificielle Multi-Provider** - Support OpenAI, Anthropic, Google
 - 🔐 **Sécurisé** - Authentication par clé API, validation des entrées, limitation de débit
 - 📝 **Documentation Interactive** - Interface Swagger UI complète et intuitive
 - 🐳 **Conteneurisé** - Déploiement facile avec Docker et Docker Compose
-- 🔄 **Mise en Cache Redis** - Stockage temporaire des résultats pour des performances améliorées
-- 🔍 **Validation SQL Avancée** - Vérification rigoureuse de la syntaxe et compatibilité des schémas
-- 🛡️ **Mode Lecture Seule** - Protection contre les opérations d'écriture potentiellement dangereuses
-- 📊 **Métriques de Performance** - Suivi des temps de traitement et des taux de réussite
+- 🔄 **Mise en Cache Redis Contrôlable** - Stockage temporaire avec contrôle par requête
+- 🔍 **Validation SQL Avancée** - Vérification rigoureuse de la syntaxe et compatibilité
+- 🛡️ **Mode Lecture Seule** - Protection contre les opérations d'écriture dangereuses
+- 📊 **Métriques de Performance** - Suivi des temps de traitement et du cache
 
 ## 🚀 Installation
 
@@ -128,9 +129,39 @@ L'API sera accessible à l'adresse http://localhost:8000
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
-### Exemples d'utilisation
+## 🛡️ Framework Obligatoire pour les Requêtes SQL
 
-#### Traduire une requête en langage naturel en SQL
+Cette API applique un framework obligatoire à toutes les requêtes SQL générées pour garantir la sécurité et la cohérence :
+
+### Éléments Obligatoires
+
+1. **Filtre Utilisateur** : Chaque requête DOIT contenir `WHERE [alias_depot].ID_USER = ?`
+2. **Table DEPOT** : La table DEPOT doit toujours être présente (directement ou via JOIN)
+3. **Hashtags** : Ajout automatique de hashtags en fin de requête selon le contexte :
+   - `#DEPOT_[alias]#` pour la table DEPOT
+   - `#FACTS_[alias]#` si utilisation de la table FACTS  
+   - `#PERIODE#` pour les requêtes temporelles
+
+### Exemple de Requête Conforme
+
+```sql
+SELECT f.NOM, f.PRENOM, f.MNT_BRUT
+FROM FACTS f
+JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
+WHERE d.ID_USER = ? 
+  AND f.NATURE_CONTRAT = '01'
+ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
+```
+
+### Validation Automatique
+
+L'API valide automatiquement que chaque requête générée respecte ce framework :
+- Si la requête n'est pas conforme, l'API tente de la corriger automatiquement
+- En cas d'échec de correction, une erreur est retournée avec le message explicatif
+
+## 📝 Exemples d'utilisation
+
+### Requête Complète avec Tous les Paramètres
 
 <details>
 <summary><b>Exemple avec curl</b></summary>
@@ -142,10 +173,14 @@ curl -X 'POST' \
   -H 'Content-Type: application/json' \
   -H 'X-API-Key: votre_clé_api' \
   -d '{
-  "query": "Liste des clients qui ont effectué plus de 5 commandes en 2023",
+  "query": "Liste des employés en CDI embauchés en 2020",
   "schema_path": null,
   "validate": true,
-  "explain": true
+  "explain": true,
+  "provider": "openai",
+  "model": "gpt-4o",
+  "user_id_placeholder": "?",
+  "use_cache": false
 }'
 ```
 
@@ -165,10 +200,14 @@ headers = {
     "X-API-Key": "votre_clé_api"
 }
 payload = {
-    "query": "Liste des clients qui ont effectué plus de 5 commandes en 2023",
+    "query": "Liste des employés en CDI embauchés en 2020",
     "schema_path": None,
     "validate": True,
-    "explain": True
+    "explain": True,
+    "provider": "openai",
+    "model": "gpt-4o",
+    "user_id_placeholder": "?",
+    "use_cache": False
 }
 
 response = requests.post(url, headers=headers, json=payload)
@@ -178,23 +217,45 @@ print(json.dumps(response.json(), indent=2))
 </details>
 
 <details>
-<summary><b>Réponse typique</b></summary>
+<summary><b>Réponse Typique</b></summary>
 
 ```json
 {
-  "query": "Liste des clients qui ont effectué plus de 5 commandes en 2023",
-  "sql": "SELECT c.nom, c.prenom, COUNT(cmd.id) as nb_commandes FROM clients c JOIN commandes cmd ON c.id = cmd.client_id WHERE YEAR(cmd.date) = 2023 GROUP BY c.id HAVING COUNT(cmd.id) > 5;",
+  "query": "Liste des employés en CDI embauchés en 2020",
+  "sql": "SELECT f.ID, f.MATRICULE, f.NOM, f.PRENOM\nFROM FACTS f\nJOIN DEPOT d ON f.ID_NUMDEPOT = d.ID\nWHERE d.ID_USER = ? \n  AND f.NATURE_CONTRAT = '01'\n  AND YEAR(f.DEBUT_CONTRAT) = 2020; #DEPOT_d# #FACTS_f#",
   "valid": true,
-  "validation_message": "La requête SQL correspond bien à votre demande et est compatible avec le schéma.",
-  "explanation": "Cette requête recherche les clients ayant passé plus de 5 commandes en 2023, en affichant leur nom et prénom.",
+  "validation_message": "La requête SQL est sécurisée. La requête respecte le framework obligatoire.",
+  "explanation": "Cette requête affiche la liste des employés en CDI embauchés en 2020.",
   "is_exact_match": false,
   "status": "success",
   "processing_time": 2.34,
-  "similar_queries": null
+  "similar_queries": null,
+  "framework_compliant": true,
+  "from_cache": false
 }
 ```
 
 </details>
+
+### Contrôle du Cache
+
+#### Avec Cache (Par Défaut)
+```json
+{
+  "query": "Liste des CDI embauchés en 2022",
+  "use_cache": true
+}
+```
+
+#### Sans Cache (Pour Tests)
+```json
+{
+  "query": "Liste des CDI embauchés en 2022",  
+  "use_cache": false
+}
+```
+
+### Autres Endpoints
 
 #### Vérifier l'état de santé de l'API
 
@@ -214,6 +275,20 @@ curl -X 'GET' \
   -H 'X-API-Key: votre_clé_api'
 ```
 
+#### Valider le framework d'une requête SQL
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/validate-framework' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -H 'X-API-Key: votre_clé_api' \
+  -d '{
+  "sql_query": "SELECT * FROM FACTS;",
+  "user_id_placeholder": "?"
+}'
+```
+
 ## 🏗️ Architecture
 
 L'application est structurée de manière modulaire, avec une séparation claire des responsabilités :
@@ -225,19 +300,20 @@ nl2sql-api/
 │   │   ├── models.py         # Modèles de données Pydantic
 │   │   └── routes.py         # Routes FastAPI
 │   ├── core/                 # Logique métier principale
-│   │   ├── translator.py     # Traducteur NL vers SQL
+│   │   ├── translator.py     # Traducteur NL vers SQL avec framework
 │   │   ├── embedding.py      # Vectorisation avec SentenceTransformer
 │   │   ├── vector_search.py  # Recherche vectorielle avec Pinecone
-│   │   └── llm.py            # Interaction avec l'API OpenAI
+│   │   └── llm.py            # Interaction avec l'API OpenAI/Anthropic
 │   ├── utils/                # Utilitaires
 │   │   ├── schema_loader.py  # Chargement des schémas SQL
 │   │   ├── validators.py     # Validation des entrées/sorties
 │   │   ├── sql_validator.py  # Validation avancée des requêtes SQL
-│   │   └── cache.py          # Gestion du cache Redis
+│   │   ├── cache.py          # Gestion du cache Redis contrôlable
+│   │   └── simple_framework_check.py # Validation du framework obligatoire
 │   ├── schemas/              # Schémas SQL des bases de données
 │   ├── security.py           # Configuration de sécurité
 │   ├── dependencies.py       # Dépendances FastAPI
-│   ├── config.py             # Configuration de l'application
+│   ├── config.py             # Configuration multi-provider
 │   └── main.py               # Point d'entrée de l'application
 ├── docker/                   # Configuration Docker
 ├── tests/                    # Tests unitaires et d'intégration
@@ -246,55 +322,90 @@ nl2sql-api/
 └── README.md                 # Documentation
 ```
 
-### Flux de traitement
+### Flux de traitement avec Framework Obligatoire
 
 ```mermaid
 graph TD
-    A[Requête utilisateur] --> B[Vectorisation]
-    B --> C{Cache Redis?}
-    C -->|Oui| D[Retourner résultat cached]
-    C -->|Non| E[Recherche dans Pinecone]
-    E --> F{Correspondance exacte?}
-    F -->|Oui| G[Retourner SQL stocké]
-    F -->|Non| H[Construire prompt pour LLM]
-    H --> I[Génération SQL avec OpenAI]
-    I --> J[Validation du SQL]
-    J --> K[Génération d'explication]
-    K --> L[Stockage dans Pinecone]
-    L --> M[Mise en cache Redis]
-    M --> N[Réponse à l'utilisateur]
-    G --> N
-    D --> N
+    A[Requête utilisateur] --> B[Vérification pertinence RH]
+    B --> C[Vectorisation]
+    C --> D{Cache activé?}
+    D -->|Oui| E{Cache hit?}
+    E -->|Oui| F[Retourner résultat cached]
+    E -->|Non| G[Recherche dans Pinecone]
+    D -->|Non| G
+    G --> H{Correspondance exacte?}
+    H -->|Oui| I[Validation cohérence sémantique]
+    I --> J{Années correspondent?}
+    J -->|Non| K[Continuer avec génération]
+    J -->|Oui| L[Valider framework obligatoire]
+    L --> M{Framework OK?}
+    M -->|Non| N[Correction automatique]
+    N --> O[Validation sécurité SQL]
+    M -->|Oui| O
+    H -->|Non| K
+    K --> P[Construction prompt avec framework]
+    P --> Q[Génération SQL via LLM]
+    Q --> R[Validation framework obligatoire]
+    R --> S{Framework OK?}
+    S -->|Non| T[Correction automatique]
+    T --> U[Validation sécurité SQL]
+    S -->|Oui| U
+    U --> V[Génération explication client-friendly]
+    V --> W[Stockage dans Pinecone]
+    W --> X[Mise en cache Redis si activé]
+    X --> Y[Réponse à l'utilisateur]
+    O --> V
+    F --> Y
 ```
 
 ## ⚙️ Configuration
 
 L'application est configurable via le fichier `.env` ou des variables d'environnement :
 
+### Variables Obligatoires
+
+| Variable | Description | Exemple |
+|----------|-------------|---------|
+| `PINECONE_API_KEY` | Clé API Pinecone | `pcsk_...` |
+| `OPENAI_API_KEY` | Clé API OpenAI | `sk-proj-...` |
+
+### Variables LLM et Providers
+
 | Variable | Description | Valeur par défaut |
 |----------|-------------|-------------------|
-| `PINECONE_API_KEY` | Clé API Pinecone | (Requis) |
-| `OPENAI_API_KEY` | Clé API OpenAI | (Requis) |
-| `PINECONE_INDEX_NAME` | Nom de l'index Pinecone | `nl2sql` |
-| `PINECONE_ENVIRONMENT` | Environnement Pinecone | `gcp-starter` |
-| `EMBEDDING_MODEL` | Modèle d'embedding | `all-MiniLM-L6-v2` |
-| `OPENAI_MODEL` | Modèle OpenAI | `gpt-4o` |
-| `OPENAI_TEMPERATURE` | Température pour la génération | `0.2` |
-| `OPENAI_TIMEOUT` | Délai d'attente pour OpenAI (secondes) | `30` |
+| `DEFAULT_PROVIDER` | Provider LLM par défaut | `openai` |
+| `DEFAULT_OPENAI_MODEL` | Modèle OpenAI par défaut | `gpt-4o` |
+| `DEFAULT_ANTHROPIC_MODEL` | Modèle Anthropic par défaut | `claude-3-opus-20240229` |
+| `DEFAULT_GOOGLE_MODEL` | Modèle Google par défaut | `gemini-pro` |
+| `LLM_TEMPERATURE` | Température pour la génération | `0.2` |
+| `LLM_TIMEOUT` | Délai d'attente LLM (secondes) | `30` |
+
+### Variables Framework et Sécurité
+
+| Variable | Description | Valeur par défaut |
+|----------|-------------|-------------------|
 | `EXACT_MATCH_THRESHOLD` | Seuil pour correspondance exacte | `0.95` |
 | `TOP_K_RESULTS` | Nombre de résultats similaires | `5` |
 | `SCHEMA_PATH` | Chemin vers le fichier de schéma SQL | `app/schemas/datasulting.sql` |
+| `SQL_READ_ONLY` | Restreint aux requêtes SELECT uniquement | `true` |
+
+### Variables Cache Redis
+
+| Variable | Description | Valeur par défaut |
+|----------|-------------|-------------------|
+| `REDIS_URL` | URL du serveur Redis | (Facultatif) |
+| `REDIS_TTL` | Durée de vie du cache en secondes | `3600` |
+| `CACHE_ENABLED` | Activation du cache Redis | `true` |
+
+### Variables API et Sécurité
+
+| Variable | Description | Valeur par défaut |
+|----------|-------------|-------------------|
 | `API_PREFIX` | Préfixe pour les routes API | `/api/v1` |
 | `API_KEY` | Clé API pour l'authentification | (Facultatif) |
 | `API_KEY_NAME` | Nom de l'en-tête pour la clé API | `X-API-Key` |
 | `ALLOWED_HOSTS` | Liste des hôtes autorisés | `["*"]` |
-| `SQL_READ_ONLY` | Restreint aux requêtes SELECT uniquement | `true` |
-| `REDIS_URL` | URL du serveur Redis | (Facultatif) |
-| `REDIS_TTL` | Durée de vie du cache en secondes | `3600` |
-| `CACHE_ENABLED` | Activation du cache Redis | `true` |
 | `DEBUG` | Mode débogage | `false` |
-| `ADMIN_SECRET` | Clé secrète pour l'administration | (Facultatif) |
-| `METRICS_ENABLED` | Activation des métriques | `false` |
 
 ## 📊 Intégration avec n8n
 
@@ -310,70 +421,69 @@ Pour intégrer cette API avec [n8n](https://n8n.io/) :
      {
        "query": "{{$input.item.json.query}}",
        "validate": true,
-       "explain": true
+       "explain": true,
+       "use_cache": true
      }
      ```
 
 3. Utilisez la réponse dans les nœuds suivants de votre workflow :
    - `{{$node["HTTP Request"].json.sql}}` pour la requête SQL générée
    - `{{$node["HTTP Request"].json.explanation}}` pour l'explication
+   - `{{$node["HTTP Request"].json.framework_compliant}}` pour vérifier la conformité
 
 ## ❓ FAQ
 
 <details>
-<summary><b>Comment puis-je améliorer la qualité des traductions SQL ?</b></summary>
+<summary><b>Comment fonctionne le framework obligatoire ?</b></summary>
 
-La qualité des traductions dépend de plusieurs facteurs :
+Le framework obligatoire garantit que chaque requête SQL :
+1. Inclut un filtre `WHERE depot.ID_USER = ?` pour la sécurité
+2. Utilise la table DEPOT pour l'autorisation
+3. Contient les hashtags appropriés pour la gestion des permissions
+
+Si une requête générée n'est pas conforme, l'API tente de la corriger automatiquement.
+
+</details>
+
+<details>
+<summary><b>Comment contrôler l'utilisation du cache ?</b></summary>
+
+Utilisez le paramètre `use_cache` dans votre requête :
+- `"use_cache": true` (défaut) : Utilise le cache Redis si disponible
+- `"use_cache": false` : Force la régénération, utile pour les tests
+
+Le champ `from_cache` dans la réponse indique si le résultat vient du cache.
+
+</details>
+
+<details>
+<summary><b>Comment améliorer la qualité des traductions SQL ?</b></summary>
+
 1. **Schéma SQL détaillé** - Plus votre schéma est complet, meilleures sont les traductions
 2. **Utilisation régulière** - Le système apprend des requêtes précédentes
 3. **Questions précises** - Formulez vos questions de manière claire et précise
-4. **Modèle LLM** - Utilisez les modèles les plus récents d'OpenAI
+4. **Seuil de correspondance** - Ajustez `EXACT_MATCH_THRESHOLD` pour éviter les faux positifs
 
 </details>
 
 <details>
-<summary><b>L'API peut-elle traduire des requêtes dans d'autres langues que le français ?</b></summary>
+<summary><b>L'API peut-elle traduire des requêtes dans d'autres langues ?</b></summary>
 
-Oui, l'API utilise des modèles d'embedding et LLM multilingues. Elle peut donc traiter des requêtes dans différentes langues, bien que les performances puissent varier selon la langue.
-
-</details>
-
-<details>
-<summary><b>Comment puis-je contribuer au projet ?</b></summary>
-
-Les contributions sont les bienvenues ! Voici comment contribuer :
-1. Forkez le dépôt
-2. Créez une branche pour votre fonctionnalité
-3. Ajoutez vos modifications avec des tests
-4. Soumettez une pull request avec une description détaillée
+Oui, l'API utilise des modèles d'embedding et LLM multilingues. Elle peut traiter des requêtes dans différentes langues, bien que les performances soient optimisées pour le français dans le contexte RH.
 
 </details>
 
 <details>
-<summary><b>Quelles sont les limites de l'API ?</b></summary>
+<summary><b>Comment fonctionne la validation sémantique ?</b></summary>
 
-- La complexité des requêtes SQL générées dépend du modèle OpenAI utilisé
-- Les performances peuvent varier selon la qualité du schéma SQL fourni
-- Les requêtes très spécifiques à un domaine peuvent nécessiter plus d'exemples
-- Les limitations de débit d'API sont appliquées pour éviter les abus
+L'API compare automatiquement les éléments temporels (années) entre votre demande et les correspondances trouvées. Si une requête similaire concerne une année différente, elle est rejetée et une nouvelle requête est générée.
 
 </details>
 
 <details>
-<summary><b>Comment fonctionne le cache Redis ?</b></summary>
+<summary><b>Que signifient les champs provider et model dans la réponse ?</b></summary>
 
-Le cache Redis stocke temporairement les résultats des traductions pour améliorer les performances :
-1. Chaque requête est vectorisée et hachée pour créer une clé de cache unique
-2. Si une requête identique ou très similaire est trouvée dans le cache, le résultat est retourné immédiatement
-3. La durée de vie des entrées du cache est configurable via la variable REDIS_TTL
-4. Le cache peut être désactivé en définissant CACHE_ENABLED=false
-
-</details>
-
-<details>
-<summary><b>L'API supporte-t-elle les écritures dans la base de données ?</b></summary>
-
-Par défaut, l'API est configurée en mode lecture seule (SQL_READ_ONLY=true), ce qui permet uniquement les requêtes SELECT. Pour activer les opérations d'écriture, définissez SQL_READ_ONLY=false dans votre fichier .env, mais uniquement dans un environnement sécurisé avec les permissions adéquates.
+Ces champs indiquent quel provider LLM (OpenAI, Anthropic, Google) et quel modèle spécifique ont été utilisés pour générer la requête. Utile pour le débogage et l'optimisation.
 
 </details>
 
@@ -381,7 +491,6 @@ Par défaut, l'API est configurée en mode lecture seule (SQL_READ_ONLY=true), c
 
 - **Entreprise**: Datasulting
 - **Site Web**: [datasulting.com](https://datasulting.com)
-
 
 ## 📄 Licence
 
@@ -391,4 +500,5 @@ Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
 
 <div align="center">
 <p>Développé avec ❤️ par <a href="https://datasulting.com">Datasulting</a></p>
+<p><em>API NL2SQL avec Framework de Sécurité Obligatoire - Version 1.0.0</em></p>
 </div>
