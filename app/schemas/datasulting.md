@@ -20,16 +20,6 @@ Chaque requête SQL générée DOIT respecter ce framework de sécurité :
    - `#FACTS_[alias]#` : Quand on utilise la table FACTS avec un alias  
    - `#PERIODE#` : Pour les requêtes avec critères temporels
 
-### Exemple de requête conforme
-
-```sql
-SELECT f.NOM, f.PRENOM, f.MNT_BRUT
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
-WHERE d.ID_USER = ? 
-  AND f.NATURE_CONTRAT = '01'
-ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
-```
 
 ## Tables principales
 
