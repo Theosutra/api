@@ -237,23 +237,10 @@ Table de référence pour les codes et libellés utilisés dans la DSN.
 | LANG | varchar(2) | Langue du libellé (FR par défaut) |
 | LINK_DATA | varchar(500) | Colonne de référence dans la base de données |
 
-### 9. HASHTAG_MODELE
-
-Table de référence pour les hashtags utilisés dans les requêtes SQL générées.
-
-| Colonne | Type | Description |
-|---------|------|-------------|
-| HASHTAG | varchar(50) | Code HashTag présent dans les requêtes SQL |
-| LIBELLE | varchar(255) | Libellé du HashTag |
-| DESCRIPTION | varchar(2000) | Description du HashTag |
-| TABLE_REF | varchar(50) | Table de référentiel pour cet axe/filtre |
-| TABLE_DATA | varchar(50) | Table de donnée où se retrouve cet axe ou filtre |
-| COLONNE_DATA | varchar(50) | Colonne correspondant à cet axe ou filtre |
-| RUBRIQUE_DSN | varchar(50) | Rubrique DSN correspondant à ce HASHTAG |
 
 ## Hashtags disponibles et leur utilisation
 
-### Hashtags principaux
+### Hashtags globaux
 - `#PERIODE#` : Période de paie (colonne PERIODE dans depot)
 - `#DEPOT_[alias]#` : Table DEPOT avec son alias (obligatoire)
 - `#FACTS_[alias]#` : Table FACTS avec son alias

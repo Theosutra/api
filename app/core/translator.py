@@ -94,8 +94,7 @@ Tu disposes du schéma complet de la base de données. Cette base contient des d
 ## 3. HASHTAGS OBLIGATOIRES EN FIN DE REQUÊTE
 - Ajoute #DEPOT_[alias]# où [alias] est l'alias de la table DEPOT
 - Ajoute #FACTS_[alias]# si tu utilises la table FACTS  
-- Ajoute #PERIODE# pour les requêtes avec des critères temporels
-- Place ces hashtags APRÈS le point-virgule final
+- Place ces hashtags AVANT le point-virgule final
 
 # SCHÉMA DE LA BASE DE DONNÉES
 ```
@@ -142,7 +141,7 @@ async def translate_nl_to_sql(
     schema_path: Optional[str] = None, 
     validate: bool = True, 
     explain: bool = True,
-    store_result: bool = True,
+    store_result: bool = False,
     return_similar_queries: bool = False,
     user_id_placeholder: str = "?",
     use_cache: bool = True,

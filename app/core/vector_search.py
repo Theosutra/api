@@ -42,7 +42,7 @@ def _init_pinecone():
                 # Créer l'index s'il n'existe pas
                 _pc.create_index(
                     name=settings.PINECONE_INDEX_NAME,
-                    dimension=384,  # Dimension for all-MiniLM-L6-v2
+                    dimension=768,  
                     metric="cosine",
                     spec=PodSpec(
                         environment=settings.PINECONE_ENVIRONMENT

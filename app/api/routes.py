@@ -59,7 +59,7 @@ async def translate_to_sql(
             schema_path=request.schema_path,
             validate=request.should_validate,
             explain=request.explain,
-            store_result=True,  # Toujours stocker les résultats pour améliorer la base de connaissances
+            store_result=False,  # Toujours stocker les résultats pour améliorer la base de connaissances
             return_similar_queries=include_similar,  # Format simplifié pour rétrocompatibilité
             user_id_placeholder=request.user_id_placeholder,
             use_cache=request.use_cache,

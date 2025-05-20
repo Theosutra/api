@@ -1,60 +1,73 @@
-# 📊 NL2SQL API
+# 🚀 NL2SQL API
 
 <div align="center">
 
 ![NL2SQL Logo](https://img.shields.io/badge/NL2SQL-API-blue?style=for-the-badge&logo=database&logoColor=white)
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![OpenAI](https://img.shields.io/badge/OpenAI-74aa9c?style=flat-square&logo=openai&logoColor=white)](https://openai.com/)
+[![Multi-LLM](https://img.shields.io/badge/Multi--LLM-OpenAI|Anthropic|Google-orange?style=flat-square)](https://openai.com/)
 [![Pinecone](https://img.shields.io/badge/Pinecone-Vector_DB-black?style=flat-square)](https://www.pinecone.io/)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-_Une API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées avec framework de sécurité obligatoire_
+_API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées avec recherche vectorielle sémantique et support multi-LLM_
 
-[Installation](#installation) • [Utilisation](#utilisation) • [Framework Obligatoire](#framework-obligatoire) • [Configuration](#configuration) • [FAQ](#faq) • [Contact](#contact)
+[🚀 Installation](#-installation) • [💻 Utilisation](#-utilisation) • [🛡️ Sécurité](#%EF%B8%8F-architecture-de-sécurité) • [⚙️ Configuration](#%EF%B8%8F-configuration) • [❓ FAQ](#-faq)
 
 </div>
 
 ---
 
-## 🌟 Fonctionnalités
+## ✨ Fonctionnalités Clés
 
-- 🔄 **Traduction Intuitive** - Transformez des questions en langage naturel en SQL performant
-- 🛡️ **Framework de Sécurité Obligatoire** - Chaque requête inclut automatiquement les filtres utilisateur nécessaires
-- 🧠 **Apprentissage Continu** - Le système s'améliore au fur et à mesure de son utilisation
-- 🔍 **Recherche Vectorielle** - Utilisation de Pinecone pour trouver des requêtes similaires
-- 🤖 **Intelligence Artificielle Multi-Provider** - Support OpenAI, Anthropic, Google
-- 🔐 **Sécurisé** - Authentication par clé API, validation des entrées, limitation de débit
-- 📝 **Documentation Interactive** - Interface Swagger UI complète et intuitive
-- 🐳 **Conteneurisé** - Déploiement facile avec Docker et Docker Compose
-- 🔄 **Mise en Cache Redis Contrôlable** - Stockage temporaire avec contrôle par requête
-- 🔍 **Validation SQL Avancée** - Vérification rigoureuse de la syntaxe et compatibilité
-- 🛡️ **Mode Lecture Seule** - Protection contre les opérations d'écriture dangereuses
-- 📊 **Métriques de Performance** - Suivi des temps de traitement et du cache
+- 🧠 **Multi-LLM** - Support OpenAI (GPT-4), Anthropic (Claude), Google (Gemini)
+- 🔍 **Recherche Sémantique** - Utilise Pinecone pour trouver des requêtes similaires
+- 🛡️ **Sécurité Renforcée** - Framework obligatoire avec filtres utilisateur automatiques
+- ⚡ **Cache Intelligent** - Redis avec contrôle granulaire par requête
+- 📋 **Validation Avancée** - Vérification de syntaxe, sécurité et conformité
+- 📚 **Documentation Interactive** - Swagger UI et ReDoc intégrés
+- 🐳 **Conteneurisé** - Déploiement avec Docker et Docker Compose
+- 🔧 **Configurable** - Variables d'environnement pour tous les paramètres
+- 📊 **Monitoring** - Métriques de performance et logs détaillés
+
+## 🏗️ Architecture
+
+```mermaid
+graph TB
+    A[Requête NL] --> B[Vérification Pertinence]
+    B --> C[Vectorisation]
+    C --> D{Cache Hit?}
+    D -->|Oui| E[Retour Cache]
+    D -->|Non| F[Recherche Pinecone]
+    F --> G{Match Exact?}
+    G -->|Oui| H[Validation Framework]
+    G -->|Non| I[Génération LLM]
+    I --> J[Validation Sécurité]
+    H --> K[Réponse]
+    J --> K
+    K --> L[Mise en Cache]
+```
 
 ## 🚀 Installation
 
 ### Prérequis
 
 - Python 3.8+
-- Clé API [Pinecone](https://www.pinecone.io/)
-- Clé API [OpenAI](https://openai.com/)
-- Redis (optionnel, pour la mise en cache)
-- Docker & Docker Compose (optionnel, pour déploiement conteneurisé)
+- Clés API pour au moins un LLM provider
+- Clé API Pinecone
+- Redis (optionnel, pour le cache)
+- Docker & Docker Compose (optionnel)
 
-### Installation Standard
+### 🔧 Installation Standard
 
-1. **Cloner le dépôt**
-
+1. **Cloner le repository**
    ```bash
    git clone https://github.com/datasulting/nl2sql-api.git
    cd nl2sql-api
    ```
 
-2. **Créer un environnement virtuel**
-
+2. **Créer l'environnement virtuel**
    ```bash
    python -m venv venv
    source venv/bin/activate  # Linux/macOS
@@ -62,85 +75,169 @@ _Une API intelligente qui traduit vos questions en langage naturel en requêtes 
    ```
 
 3. **Installer les dépendances**
-
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Configurer l'environnement**
-
+4. **Configuration**
    ```bash
    cp .env.example .env
    ```
-
-   Modifiez le fichier `.env` avec vos clés API et paramètres.
-
-5. **Ajouter un schéma SQL**
-
-   Créez un fichier de schéma SQL dans le répertoire `app/schemas/`:
    
+   Éditez `.env` avec vos clés API :
+   ```env
+   # Obligatoire
+   PINECONE_API_KEY=your_key_here
+   OPENAI_API_KEY=your_key_here
+   
+   # Optionnel pour multi-LLM
+   ANTHROPIC_API_KEY=your_key_here
+   GOOGLE_API_KEY=your_key_here
+   
+   # Configuration base
+   PINECONE_INDEX_NAME=nl2sql-index
+   DEFAULT_PROVIDER=openai
+   ```
+
+5. **Ajouter votre schéma**
    ```bash
    mkdir -p app/schemas
-   touch app/schemas/datasulting.sql
+   # Copier votre fichier de schéma SQL/Markdown
+   cp your-schema.sql app/schemas/
    ```
-   
-   Ajoutez votre schéma de base de données dans ce fichier.
 
-### Installation avec Docker
+6. **Lancer l'application**
+   ```bash
+   python -m app.main
+   ```
 
-1. **Cloner le dépôt**
+### 🐳 Installation avec Docker
 
+1. **Préparer la configuration**
    ```bash
    git clone https://github.com/datasulting/nl2sql-api.git
    cd nl2sql-api
-   ```
-
-2. **Configurer l'environnement**
-
-   ```bash
    cp .env.example .env
+   # Éditer .env avec vos clés
    ```
 
-   Modifiez le fichier `.env` avec vos clés API et paramètres.
-
-3. **Ajouter un schéma SQL** 
-
-   Créez votre schéma SQL dans `app/schemas/datasulting.sql`.
-
-4. **Lancer avec Docker Compose**
-
+2. **Lancer avec Docker Compose**
    ```bash
-   cd docker
    docker-compose up -d
    ```
 
+L'API sera accessible sur http://localhost:8000
+
 ## 💻 Utilisation
 
-### Démarrer l'application
+### 📖 Documentation Interactive
+
+- **Swagger UI** : http://localhost:8000/docs
+- **ReDoc** : http://localhost:8000/redoc
+
+### 🔄 Endpoint Principal : `/api/v1/translate`
 
 ```bash
-python -m app.main
+curl -X POST "http://localhost:8000/api/v1/translate" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your_api_key" \
+  -d '{
+    "query": "Liste des employés en CDI embauchés en 2023",
+    "provider": "openai",
+    "model": "gpt-4o",
+    "explain": true,
+    "use_cache": true
+  }'
 ```
 
-L'API sera accessible à l'adresse http://localhost:8000
+### 📋 Paramètres Disponibles
 
-### Documentation Interactive
+| Paramètre | Type | Défaut | Description |
+|-----------|------|--------|-------------|
+| `query` | string | **requis** | Question en langage naturel |
+| `provider` | string | `openai` | LLM à utiliser (`openai`, `anthropic`, `google`) |
+| `model` | string | auto | Modèle spécifique (ex: `gpt-4o`, `claude-3-opus-20240229`) |
+| `validate` | boolean | `true` | Valider la requête SQL générée |
+| `explain` | boolean | `true` | Fournir une explication |
+| `use_cache` | boolean | `true` | Utiliser le cache Redis |
+| `include_similar_details` | boolean | `false` | Inclure les détails des vecteurs similaires |
 
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+### 🎯 Exemples d'Utilisation
 
-## 🛡️ Framework Obligatoire pour les Requêtes SQL
+<details>
+<summary><b>Exemple avec Python</b></summary>
 
-Cette API applique un framework obligatoire à toutes les requêtes SQL générées pour garantir la sécurité et la cohérence :
+```python
+import requests
 
-### Éléments Obligatoires
+url = "http://localhost:8000/api/v1/translate"
+headers = {
+    "Content-Type": "application/json",
+    "X-API-Key": "your_api_key"
+}
 
-1. **Filtre Utilisateur** : Chaque requête DOIT contenir `WHERE [alias_depot].ID_USER = ?`
-2. **Table DEPOT** : La table DEPOT doit toujours être présente (directement ou via JOIN)
-3. **Hashtags** : Ajout automatique de hashtags en fin de requête selon le contexte :
-   - `#DEPOT_[alias]#` pour la table DEPOT
-   - `#FACTS_[alias]#` si utilisation de la table FACTS  
-   - `#PERIODE#` pour les requêtes temporelles
+# Requête simple
+response = requests.post(url, headers=headers, json={
+    "query": "Combien d'employés en CDI ?",
+    "provider": "openai"
+})
+
+result = response.json()
+print(f"SQL: {result['sql']}")
+print(f"Explication: {result['explanation']}")
+
+# Requête avancée avec cache désactivé
+response = requests.post(url, headers=headers, json={
+    "query": "Top 10 des salaires les plus élevés en 2023",
+    "provider": "anthropic",
+    "model": "claude-3-opus-20240229",
+    "use_cache": False,
+    "include_similar_details": True
+})
+```
+
+</details>
+
+<details>
+<summary><b>Réponse Type</b></summary>
+
+```json
+{
+  "query": "Liste des employés en CDI embauchés en 2023",
+  "sql": "SELECT f.NOM, f.PRENOM, f.DEBUT_CONTRAT\nFROM FACTS f\nJOIN DEPOT d ON f.ID_NUMDEPOT = d.ID\nWHERE d.ID_USER = ?\n  AND f.NATURE_CONTRAT = '01'\n  AND YEAR(f.DEBUT_CONTRAT) = 2023\nORDER BY f.NOM; #DEPOT_d# #FACTS_f# #PERIODE#",
+  "valid": true,
+  "validation_message": "Requête SQL conforme au framework de sécurité",
+  "explanation": "Cette requête liste tous les employés en CDI embauchés en 2023.",
+  "is_exact_match": false,
+  "status": "success",
+  "processing_time": 1.84,
+  "framework_compliant": true,
+  "from_cache": false,
+  "provider": "openai",
+  "model": "gpt-4o"
+}
+```
+
+</details>
+
+### 🛡️ Autres Endpoints
+
+| Endpoint | Méthode | Description |
+|----------|---------|-------------|
+| `/api/v1/health` | GET | État de santé des services |
+| `/api/v1/models` | GET | Modèles LLM disponibles |
+| `/api/v1/schemas` | GET | Schémas SQL disponibles |
+| `/api/v1/validate-framework` | POST | Validation framework d'une requête |
+
+## 🛡️ Architecture de Sécurité
+
+### Framework Obligatoire
+
+Chaque requête SQL générée **DOIT OBLIGATOIREMENT** respecter :
+
+1. **Filtre Utilisateur** : `WHERE [alias_depot].ID_USER = ?`
+2. **Table DEPOT** : Toujours présente pour les autorisations
+3. **Hashtags** : `#DEPOT_[alias]#` minimum + contextuels
 
 ### Exemple de Requête Conforme
 
@@ -153,352 +250,247 @@ WHERE d.ID_USER = ?
 ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
 ```
 
-### Validation Automatique
+### Validation Multi-Niveaux
 
-L'API valide automatiquement que chaque requête générée respecte ce framework :
-- Si la requête n'est pas conforme, l'API tente de la corriger automatiquement
-- En cas d'échec de correction, une erreur est retournée avec le message explicatif
+1. ✅ **Validation Framework** - Respect des règles obligatoires
+2. ✅ **Validation Sécurité** - Détection d'opérations dangereuses
+3. ✅ **Validation Sémantique** - Cohérence avec la demande
+4. ✅ **Validation SQL** - Syntaxe et structure
 
-## 📝 Exemples d'utilisation
+## ⚙️ Configuration
 
-### Requête Complète avec Tous les Paramètres
+### Variables d'Environnement
 
-<details>
-<summary><b>Exemple avec curl</b></summary>
+#### 🔑 API Keys (Obligatoires)
 
-```bash
-curl -X 'POST' \
-  'http://localhost:8000/api/v1/translate' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: votre_clé_api' \
-  -d '{
-  "query": "Liste des employés en CDI embauchés en 2020",
-  "schema_path": null,
-  "validate": true,
-  "explain": true,
-  "provider": "openai",
-  "model": "gpt-4o",
-  "user_id_placeholder": "?",
-  "use_cache": false
-}'
+```env
+PINECONE_API_KEY=your_pinecone_key
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key  # Optionnel
+GOOGLE_API_KEY=your_google_key        # Optionnel
 ```
 
-</details>
+#### 🤖 Configuration LLM
 
-<details>
-<summary><b>Exemple avec Python</b></summary>
-
-```python
-import requests
-import json
-
-url = "http://localhost:8000/api/v1/translate"
-headers = {
-    "accept": "application/json",
-    "Content-Type": "application/json",
-    "X-API-Key": "votre_clé_api"
-}
-payload = {
-    "query": "Liste des employés en CDI embauchés en 2020",
-    "schema_path": None,
-    "validate": True,
-    "explain": True,
-    "provider": "openai",
-    "model": "gpt-4o",
-    "user_id_placeholder": "?",
-    "use_cache": False
-}
-
-response = requests.post(url, headers=headers, json=payload)
-print(json.dumps(response.json(), indent=2))
+```env
+DEFAULT_PROVIDER=openai               # openai, anthropic, google
+DEFAULT_OPENAI_MODEL=gpt-4o
+DEFAULT_ANTHROPIC_MODEL=claude-3-opus-20240229
+DEFAULT_GOOGLE_MODEL=gemini-pro
+LLM_TEMPERATURE=0.2
+LLM_TIMEOUT=30
 ```
 
-</details>
+#### 🔍 Configuration Recherche
 
-<details>
-<summary><b>Réponse Typique</b></summary>
-
-```json
-{
-  "query": "Liste des employés en CDI embauchés en 2020",
-  "sql": "SELECT f.ID, f.MATRICULE, f.NOM, f.PRENOM\nFROM FACTS f\nJOIN DEPOT d ON f.ID_NUMDEPOT = d.ID\nWHERE d.ID_USER = ? \n  AND f.NATURE_CONTRAT = '01'\n  AND YEAR(f.DEBUT_CONTRAT) = 2020; #DEPOT_d# #FACTS_f#",
-  "valid": true,
-  "validation_message": "La requête SQL est sécurisée. La requête respecte le framework obligatoire.",
-  "explanation": "Cette requête affiche la liste des employés en CDI embauchés en 2020.",
-  "is_exact_match": false,
-  "status": "success",
-  "processing_time": 2.34,
-  "similar_queries": null,
-  "framework_compliant": true,
-  "from_cache": false
-}
+```env
+EXACT_MATCH_THRESHOLD=0.95    # Seuil correspondance exacte
+TOP_K_RESULTS=5               # Nombre résultats similaires
+SCHEMA_PATH=app/schemas/datasulting.sql
+EMBEDDING_MODEL=all-mpnet-base-v2
 ```
 
-</details>
+#### 🗄️ Configuration Cache Redis
 
-### Contrôle du Cache
-
-#### Avec Cache (Par Défaut)
-```json
-{
-  "query": "Liste des CDI embauchés en 2022",
-  "use_cache": true
-}
+```env
+REDIS_URL=redis://localhost:6379/0
+REDIS_TTL=3600                # Durée cache (secondes)
+CACHE_ENABLED=true
 ```
 
-#### Sans Cache (Pour Tests)
-```json
-{
-  "query": "Liste des CDI embauchés en 2022",  
-  "use_cache": false
-}
+#### 🔐 Configuration Sécurité
+
+```env
+API_KEY=your_secret_api_key   # Authentification (optionnel)
+API_KEY_NAME=X-API-Key
+ALLOWED_HOSTS=["*","localhost","127.0.0.1"]
+DEBUG=false
 ```
 
-### Autres Endpoints
-
-#### Vérifier l'état de santé de l'API
-
-```bash
-curl -X 'GET' \
-  'http://localhost:8000/api/v1/health' \
-  -H 'accept: application/json' \
-  -H 'X-API-Key: votre_clé_api'
-```
-
-#### Obtenir la liste des schémas disponibles
-
-```bash
-curl -X 'GET' \
-  'http://localhost:8000/api/v1/schemas' \
-  -H 'accept: application/json' \
-  -H 'X-API-Key: votre_clé_api'
-```
-
-#### Valider le framework d'une requête SQL
-
-```bash
-curl -X 'POST' \
-  'http://localhost:8000/api/v1/validate-framework' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: application/json' \
-  -H 'X-API-Key: votre_clé_api' \
-  -d '{
-  "sql_query": "SELECT * FROM FACTS;",
-  "user_id_placeholder": "?"
-}'
-```
-
-## 🏗️ Architecture
-
-L'application est structurée de manière modulaire, avec une séparation claire des responsabilités :
+## 🔧 Architecture du Projet
 
 ```
 nl2sql-api/
 ├── app/                      # Code source principal
-│   ├── api/                  # Endpoints de l'API
-│   │   ├── models.py         # Modèles de données Pydantic
-│   │   └── routes.py         # Routes FastAPI
-│   ├── core/                 # Logique métier principale
-│   │   ├── translator.py     # Traducteur NL vers SQL avec framework
-│   │   ├── embedding.py      # Vectorisation avec SentenceTransformer
-│   │   ├── vector_search.py  # Recherche vectorielle avec Pinecone
-│   │   └── llm.py            # Interaction avec l'API OpenAI/Anthropic
+│   ├── api/                  # Couche API
+│   │   ├── models.py         # Modèles Pydantic
+│   │   └── routes.py         # Endpoints FastAPI
+│   ├── core/                 # Logique métier
+│   │   ├── translator.py     # Traducteur principal
+│   │   ├── llm_service.py    # Service LLM unifié
+│   │   ├── embedding.py      # Vectorisation
+│   │   └── vector_search.py  # Recherche Pinecone
 │   ├── utils/                # Utilitaires
-│   │   ├── schema_loader.py  # Chargement des schémas SQL
-│   │   ├── validators.py     # Validation des entrées/sorties
-│   │   ├── sql_validator.py  # Validation avancée des requêtes SQL
-│   │   ├── cache.py          # Gestion du cache Redis contrôlable
-│   │   └── simple_framework_check.py # Validation du framework obligatoire
-│   ├── schemas/              # Schémas SQL des bases de données
-│   ├── security.py           # Configuration de sécurité
+│   │   ├── cache.py          # Gestion cache Redis
+│   │   ├── validators.py     # Validations
+│   │   └── simple_framework_check.py # Framework obligatoire
+│   ├── schemas/              # Schémas SQL/MD
+│   ├── config.py             # Configuration
 │   ├── dependencies.py       # Dépendances FastAPI
-│   ├── config.py             # Configuration multi-provider
-│   └── main.py               # Point d'entrée de l'application
-├── docker/                   # Configuration Docker
-├── tests/                    # Tests unitaires et d'intégration
-├── .env.example              # Exemple de variables d'environnement
-├── requirements.txt          # Dépendances Python
-└── README.md                 # Documentation
+│   ├── security.py          # Middlewares sécurité
+│   └── main.py              # Point d'entrée
+├── docker/                  # Configuration Docker
+├── tests/                   # Tests
+├── .env.example            # Template configuration
+├── requirements.txt        # Dépendances Python
+└── README.md
 ```
 
-### Flux de traitement avec Framework Obligatoire
+## 🔄 Flux de Traitement
 
-```mermaid
-graph TD
-    A[Requête utilisateur] --> B[Vérification pertinence RH]
-    B --> C[Vectorisation]
-    C --> D{Cache activé?}
-    D -->|Oui| E{Cache hit?}
-    E -->|Oui| F[Retourner résultat cached]
-    E -->|Non| G[Recherche dans Pinecone]
-    D -->|Non| G
-    G --> H{Correspondance exacte?}
-    H -->|Oui| I[Validation cohérence sémantique]
-    I --> J{Années correspondent?}
-    J -->|Non| K[Continuer avec génération]
-    J -->|Oui| L[Valider framework obligatoire]
-    L --> M{Framework OK?}
-    M -->|Non| N[Correction automatique]
-    N --> O[Validation sécurité SQL]
-    M -->|Oui| O
-    H -->|Non| K
-    K --> P[Construction prompt avec framework]
-    P --> Q[Génération SQL via LLM]
-    Q --> R[Validation framework obligatoire]
-    R --> S{Framework OK?}
-    S -->|Non| T[Correction automatique]
-    T --> U[Validation sécurité SQL]
-    S -->|Oui| U
-    U --> V[Génération explication client-friendly]
-    V --> W[Stockage dans Pinecone]
-    W --> X[Mise en cache Redis si activé]
-    X --> Y[Réponse à l'utilisateur]
-    O --> V
-    F --> Y
+1. **Réception** : Validation requête utilisateur
+2. **Pertinence** : Vérification domaine RH avec LLM
+3. **Cache** : Recherche en cache Redis (si activé)
+4. **Vectorisation** : Conversion texte → vecteur
+5. **Recherche** : Top-K requêtes similaires (Pinecone)
+6. **Correspondance** : Vérification correspondance exacte
+7. **Génération** : Création SQL via LLM avec contexte
+8. **Validation** : Framework + sécurité + sémantique
+9. **Cache** : Stockage résultat (si succès)
+10. **Réponse** : Retour formaté avec métadonnées
+
+## 🧪 Tests
+
+```bash
+# Installation des dépendances de test
+pip install pytest pytest-asyncio httpx
+
+# Lancer les tests
+pytest tests/ -v
+
+# Tests avec couverture
+pytest tests/ --cov=app --cov-report=html
 ```
 
-## ⚙️ Configuration
+## 📊 Monitoring & Métriques
 
-L'application est configurable via le fichier `.env` ou des variables d'environnement :
+### Endpoints de Monitoring
 
-### Variables Obligatoires
+- **Health Check** : `/api/v1/health`
+- **Status Services** : Pinecone, LLM, Redis, Embedding
 
-| Variable | Description | Exemple |
-|----------|-------------|---------|
-| `PINECONE_API_KEY` | Clé API Pinecone | `pcsk_...` |
-| `OPENAI_API_KEY` | Clé API OpenAI | `sk-proj-...` |
+### Logs Structurés
 
-### Variables LLM et Providers
+```python
+# Exemple de log
+2024-01-15 10:30:45 - nl2sql.translator - INFO - Traduction terminée en 2.340s (statut: success, framework: conforme, provider: openai)
+```
 
-| Variable | Description | Valeur par défaut |
-|----------|-------------|-------------------|
-| `DEFAULT_PROVIDER` | Provider LLM par défaut | `openai` |
-| `DEFAULT_OPENAI_MODEL` | Modèle OpenAI par défaut | `gpt-4o` |
-| `DEFAULT_ANTHROPIC_MODEL` | Modèle Anthropic par défaut | `claude-3-opus-20240229` |
-| `DEFAULT_GOOGLE_MODEL` | Modèle Google par défaut | `gemini-pro` |
-| `LLM_TEMPERATURE` | Température pour la génération | `0.2` |
-| `LLM_TIMEOUT` | Délai d'attente LLM (secondes) | `30` |
+### Métriques Disponibles
 
-### Variables Framework et Sécurité
+- Temps de traitement par requête
+- Taux de cache hit/miss
+- Distribution par provider LLM
+- Taux de conformité framework
 
-| Variable | Description | Valeur par défaut |
-|----------|-------------|-------------------|
-| `EXACT_MATCH_THRESHOLD` | Seuil pour correspondance exacte | `0.95` |
-| `TOP_K_RESULTS` | Nombre de résultats similaires | `5` |
-| `SCHEMA_PATH` | Chemin vers le fichier de schéma SQL | `app/schemas/datasulting.sql` |
-| `SQL_READ_ONLY` | Restreint aux requêtes SELECT uniquement | `true` |
+## 🚀 Déploiement Production
 
-### Variables Cache Redis
+### Docker Compose (Recommandé)
 
-| Variable | Description | Valeur par défaut |
-|----------|-------------|-------------------|
-| `REDIS_URL` | URL du serveur Redis | (Facultatif) |
-| `REDIS_TTL` | Durée de vie du cache en secondes | `3600` |
-| `CACHE_ENABLED` | Activation du cache Redis | `true` |
+```yaml
+version: '3.8'
+services:
+  api:
+    image: nl2sql-api:latest
+    environment:
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+  
+  redis:
+    image: redis:alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
 
-### Variables API et Sécurité
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+```
 
-| Variable | Description | Valeur par défaut |
-|----------|-------------|-------------------|
-| `API_PREFIX` | Préfixe pour les routes API | `/api/v1` |
-| `API_KEY` | Clé API pour l'authentification | (Facultatif) |
-| `API_KEY_NAME` | Nom de l'en-tête pour la clé API | `X-API-Key` |
-| `ALLOWED_HOSTS` | Liste des hôtes autorisés | `["*"]` |
-| `DEBUG` | Mode débogage | `false` |
+### Variables pour Production
 
-## 📊 Intégration avec n8n
-
-Pour intégrer cette API avec [n8n](https://n8n.io/) :
-
-1. Ajoutez un nœud **HTTP Request** dans votre workflow n8n
-2. Configurez le nœud comme suit :
-   - Méthode : `POST`
-   - URL : `http://votre-serveur:8000/api/v1/translate`
-   - En-têtes : `X-API-Key: votre_clé_api`
-   - Corps de la requête (JSON) :
-     ```json
-     {
-       "query": "{{$input.item.json.query}}",
-       "validate": true,
-       "explain": true,
-       "use_cache": true
-     }
-     ```
-
-3. Utilisez la réponse dans les nœuds suivants de votre workflow :
-   - `{{$node["HTTP Request"].json.sql}}` pour la requête SQL générée
-   - `{{$node["HTTP Request"].json.explanation}}` pour l'explication
-   - `{{$node["HTTP Request"].json.framework_compliant}}` pour vérifier la conformité
+```env
+DEBUG=false
+CACHE_ENABLED=true
+METRICS_ENABLED=true
+API_KEY=generate_strong_secret
+ALLOWED_HOSTS=["your-domain.com","api.your-domain.com"]
+```
 
 ## ❓ FAQ
 
 <details>
-<summary><b>Comment fonctionne le framework obligatoire ?</b></summary>
+<summary><b>Comment l'API évite-t-elle la pollution de ma base vectorielle ?</b></summary>
 
-Le framework obligatoire garantit que chaque requête SQL :
-1. Inclut un filtre `WHERE depot.ID_USER = ?` pour la sécurité
-2. Utilise la table DEPOT pour l'autorisation
-3. Contient les hashtags appropriés pour la gestion des permissions
-
-Si une requête générée n'est pas conforme, l'API tente de la corriger automatiquement.
+L'API ne stocke **JAMAIS** automatiquement de nouvelles requêtes dans Pinecone. Elle utilise uniquement la base existante pour la recherche sémantique. Le stockage peut être activé manuellement si nécessaire.
 
 </details>
 
 <details>
-<summary><b>Comment contrôler l'utilisation du cache ?</b></summary>
+<summary><b>Quels sont les providers LLM supportés ?</b></summary>
 
-Utilisez le paramètre `use_cache` dans votre requête :
-- `"use_cache": true` (défaut) : Utilise le cache Redis si disponible
-- `"use_cache": false` : Force la régénération, utile pour les tests
-
-Le champ `from_cache` dans la réponse indique si le résultat vient du cache.
+- **OpenAI** : GPT-4o, GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
+- **Anthropic** : Claude 3 Opus, Claude 3 Sonnet, Claude 3 Haiku  
+- **Google** : Gemini Pro, Gemini 1.5 Pro, Gemini 1.5 Flash
 
 </details>
 
 <details>
-<summary><b>Comment améliorer la qualité des traductions SQL ?</b></summary>
+<summary><b>Comment fonctionne le framework de sécurité ?</b></summary>
 
-1. **Schéma SQL détaillé** - Plus votre schéma est complet, meilleures sont les traductions
-2. **Utilisation régulière** - Le système apprend des requêtes précédentes
-3. **Questions précises** - Formulez vos questions de manière claire et précise
-4. **Seuil de correspondance** - Ajustez `EXACT_MATCH_THRESHOLD` pour éviter les faux positifs
+Chaque requête générée DOIT inclure :
+1. Filtre `WHERE depot.ID_USER = ?` pour la sécurité
+2. Table DEPOT pour les autorisations  
+3. Hashtags appropriés pour la gestion des permissions
 
-</details>
-
-<details>
-<summary><b>L'API peut-elle traduire des requêtes dans d'autres langues ?</b></summary>
-
-Oui, l'API utilise des modèles d'embedding et LLM multilingues. Elle peut traiter des requêtes dans différentes langues, bien que les performances soient optimisées pour le français dans le contexte RH.
+Si une requête n'est pas conforme, l'API tente une correction automatique.
 
 </details>
 
 <details>
-<summary><b>Comment fonctionne la validation sémantique ?</b></summary>
+<summary><b>Le cache Redis est-il obligatoire ?</b></summary>
 
-L'API compare automatiquement les éléments temporels (années) entre votre demande et les correspondances trouvées. Si une requête similaire concerne une année différente, elle est rejetée et une nouvelle requête est générée.
-
+Non, Redis est optionnel. Sans Redis :
+- Les performances seront légèrement impactées
+- Chaque requête sera retraitée complètement
+- La limitation de débit utilisera une mémoire interne
 </details>
 
 <details>
-<summary><b>Que signifient les champs provider et model dans la réponse ?</b></summary>
+<summary><b>Comment personnaliser le schéma de base de données ?</b></summary>
 
-Ces champs indiquent quel provider LLM (OpenAI, Anthropic, Google) et quel modèle spécifique ont été utilisés pour générer la requête. Utile pour le débogage et l'optimisation.
+1. Créez votre fichier `.sql` ou `.md` dans `app/schemas/`
+2. Modifiez `SCHEMA_PATH` dans votre `.env`
+3. Redémarrez l'application
+
+Le schéma peut être en SQL standard ou en Markdown documenté.
 
 </details>
 
-## 📞 Contact
+## 🤝 Contribution
 
-- **Entreprise**: Datasulting
-- **Site Web**: [datasulting.com](https://datasulting.com)
+Les contributions sont bienvenues ! Voir [CONTRIBUTING.md](CONTRIBUTING.md) pour les guidelines.
 
 ## 📄 Licence
 
-Ce projet est sous licence MIT. Voir le fichier `LICENSE` pour plus de détails.
+Ce projet est sous licence MIT. Voir [LICENSE](LICENSE) pour plus de détails.
+
+## 📞 Support
+
+- **Organisation** : [Datasulting](https://datasulting.com)
+- **Email** : support@datasulting.com
+- **Documentation** : [Wiki du projet](../../wiki)
 
 ---
 
 <div align="center">
+<p>✨ <strong>NL2SQL API - Transformez vos questions en requêtes SQL intelligentes</strong> ✨</p>
 <p>Développé avec ❤️ par <a href="https://datasulting.com">Datasulting</a></p>
-<p><em>API NL2SQL avec Framework de Sécurité Obligatoire - Version 1.0.0</em></p>
+<p><em>Version 2.0.0 - Support Multi-LLM & Recherche Vectorielle Avancée</em></p>
 </div>
