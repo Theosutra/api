@@ -62,7 +62,7 @@ def format_similar_queries_for_response(similar_queries: List[Dict[str, Any]], i
 
 async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], schema: str) -> str:
     """
-    Construit un prompt optimisé pour GPT-4o pour la traduction NL2SQL avec framework obligatoire.
+    Construit un prompt optimisé pour la traduction NL2SQL avec apprentissage à partir des exemples similaires.
     
     Args:
         user_query: La requête utilisateur en langage naturel
@@ -74,46 +74,49 @@ async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], s
     """
     formatted_schema = schema
         
-    prompt = f"""Tu es un expert SQL chevronné spécialisé dans la traduction de questions en langage naturel en requêtes SQL performantes et optimisées pour le reporting RH.
+    prompt = f"""Tu es un expert SQL spécialisé dans la traduction de questions RH en langage naturel vers SQL, optimisé pour une base de données de gestion sociale. Ta tâche est principalement d'ADAPTER des requêtes existantes similaires.
 
-# CONTEXTE
-Tu disposes du schéma complet de la base de données. Cette base contient des données RH et sociales issues de Déclarations Sociales Nominatives (DSN).
+# MÉTHODE DE TRAVAIL
+1. Étudie attentivement les requêtes similaires fournies - ce sont des exemples déjà validés de haute qualité
+2. Priorise la STRUCTURE des requêtes similaires avec le meilleur score de correspondance
+3. Adapte la requête la plus proche en modifiant uniquement les éléments nécessaires pour répondre à la question
+4. N'invente pas de nouvelles structures si une requête similaire peut être adaptée
 
-# RÈGLES OBLIGATOIRES - À RESPECTER ABSOLUMENT DANS CHAQUE REQUÊTE
-
-## 1. FILTRE UTILISATEUR OBLIGATOIRE
-- CHAQUE requête SQL DOIT OBLIGATOIREMENT contenir : WHERE [alias_depot].ID_USER = ?
-- Ce filtre est OBLIGATOIRE pour la sécurité et les autorisations utilisateur
-- Exemple : WHERE d.ID_USER = ? (si l'alias de DEPOT est 'd')
-
-## 2. TABLE DEPOT TOUJOURS REQUISE
-- La table DEPOT doit TOUJOURS être présente dans chaque requête
-- Elle peut être jointe directement ou indirectement via FACTS
-- Utilise un alias court comme 'd' pour DEPOT
-
-## 3. HASHTAGS OBLIGATOIRES EN FIN DE REQUÊTE
-- Ajoute #DEPOT_[alias]# où [alias] est l'alias de la table DEPOT
-- Ajoute #FACTS_[alias]# si tu utilises la table FACTS  
-- Place ces hashtags AVANT le point-virgule final
+# CONSIGNES STRICTES
+- Respecte TOUS les éléments du framework de sécurité (filtre ID_USER et hashtags)
+- Copie la structure, les jointures et l'organisation des requêtes similaires pertinentes
+- Assure-toi que les colonnes utilisées existent bien dans le schéma fourni
+- Conserve la même structure de filtrage et de regroupement que les exemples similaires
+- N'ajoute JAMAIS de nouvelles jointures, sous-requêtes ou fonctions non présentes dans les exemples similaires sauf si absolument nécessaire
 
 # SCHÉMA DE LA BASE DE DONNÉES
 ```
 {formatted_schema}
 ```
 
-# EXEMPLES DE REQUÊTES SIMILAIRES
+# REQUÊTES SIMILAIRES (PRIORITÉ PAR SCORE)
 """
     
+    # Tri des requêtes par score de similarité (du plus élevé au plus bas)
+    sorted_queries = sorted(similar_queries, key=lambda q: q['score'], reverse=True)
+    
     # Ajouter les exemples avec le framework obligatoire appliqué
-    for i, query in enumerate(similar_queries, 1):
+    for i, query in enumerate(sorted_queries, 1):
         metadata = query['metadata']
-        query_text = metadata.get('texte_complet', metadata.get('description', 'N/A'))
+        query_text = metadata.get('nom')
         sql_query = metadata.get('requete', 'N/A')
+        score = query['score']
         
-        prompt += f"""EXEMPLE {i} - Score: {query['score']:.2f}
-Question: {query_text}
-SQL: {sql_query}
-
+        # Mettre en évidence les requêtes avec des scores élevés
+        emphasis = "⭐⭐⭐" if score > 0.85 else "⭐⭐" if score > 0.75 else "⭐"
+        
+        prompt += f"""
+EXEMPLE {i} [{emphasis} Score: {score:.2f}]
+Question: "{query_text}"
+SQL: 
+```sql
+{sql_query}
+```
 """
     
     prompt += f"""
@@ -121,14 +124,11 @@ SQL: {sql_query}
 Question: "{user_query}"
 
 # INSTRUCTIONS FINALES
-1. Analyse la question pour comprendre les besoins
-2. Si la question ne concerne pas la RH, réponds "IMPOSSIBLE"
-3. Identifie les tables nécessaires du schéma
-4. Construis la requête en respectant OBLIGATOIREMENT :
-   - Table DEPOT présente avec alias
-   - Filtre WHERE [alias_depot].ID_USER = ?
-   - Hashtags en fin : #DEPOT_[alias]# et autres selon contexte
-5. Retourne UNIQUEMENT la requête SQL finale
+1. Identifie la requête similaire avec la structure la plus adaptée
+2. Adapte cette requête en gardant sa structure, jointures et organisation
+3. Modifie uniquement les colonnes, filtres et conditions nécessaires pour répondre à la nouvelle question
+4. Vérifie que tous les éléments du framework de sécurité sont présents
+5. Retourne UNIQUEMENT la requête SQL finale sans aucune explication
 
 SQL:"""
     
@@ -473,7 +473,7 @@ async def health_check() -> Dict[str, Any]:
     
     return {
         "status": "ok" if all_ok else "error",
-        "version": "1.0.0",  # À mettre à jour avec la version réelle
+        "version": "1.0.0",  
         "services": {
             "embedding": embedding_status,
             "pinecone": pinecone_status,
