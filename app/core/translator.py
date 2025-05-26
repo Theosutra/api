@@ -62,34 +62,38 @@ def format_similar_queries_for_response(similar_queries: List[Dict[str, Any]], i
 
 async def build_prompt(user_query: str, similar_queries: List[Dict[str, Any]], schema: str) -> str:
     """
-    Construit un prompt optimisé pour la traduction NL2SQL avec apprentissage à partir des exemples similaires.
+    Construit un prompt optimisé pour la traduction NL2SQL avec apprentissage à partir des exemples similaires
+    et en mettant l'accent sur l'utilisation de la documentation complète dans datasulting.md.
     
     Args:
         user_query: La requête utilisateur en langage naturel
         similar_queries: Liste des requêtes similaires trouvées
-        schema: Le schéma de la base de données
+        schema: Le schéma de la base de données (contenu de datasulting.md)
         
     Returns:
         Le prompt formaté pour le LLM
     """
     formatted_schema = schema
         
-    prompt = f"""Tu es un expert SQL spécialisé dans la traduction de questions RH en langage naturel vers SQL, optimisé pour une base de données de gestion sociale. Ta tâche est principalement d'ADAPTER des requêtes existantes similaires.
+    prompt = f"""Tu es un expert SQL spécialisé dans la traduction de questions RH en langage naturel vers SQL, optimisé pour une base de données de gestion sociale. Tu dois ANALYSER ATTENTIVEMENT la documentation de la base de données fournie et ADAPTER des requêtes existantes similaires.
 
-# MÉTHODE DE TRAVAIL
-1. Étudie attentivement les requêtes similaires fournies - ce sont des exemples déjà validés de haute qualité
-2. Priorise la STRUCTURE des requêtes similaires avec le meilleur score de correspondance
-3. Adapte la requête la plus proche en modifiant uniquement les éléments nécessaires pour répondre à la question
-4. N'invente pas de nouvelles structures si une requête similaire peut être adaptée
+# MÉTHODE DE TRAVAIL PRIORITAIRE
+1. EXAMINE D'ABORD la documentation de la base de données fournie - c'est une ressource exhaustive qui contient le schéma, les bonnes pratiques, et les modèles de requêtes recommandés
+2. CONSULTE ENSUITE les requêtes similaires fournies et priorise celles avec le meilleur score de correspondance
+3. ADAPTE la requête la plus pertinente en la modifiant pour répondre à la question, en t'appuyant sur la documentation
+4. NE CONSTRUIS PAS de nouvelles requêtes à partir de zéro quand une adaptation est possible
 
 # CONSIGNES STRICTES
-- Respecte TOUS les éléments du framework de sécurité (filtre ID_USER et hashtags)
-- Copie la structure, les jointures et l'organisation des requêtes similaires pertinentes
-- Assure-toi que les colonnes utilisées existent bien dans le schéma fourni
-- Conserve la même structure de filtrage et de regroupement que les exemples similaires
-- N'ajoute JAMAIS de nouvelles jointures, sous-requêtes ou fonctions non présentes dans les exemples similaires sauf si absolument nécessaire
+- RESPECTE TOUJOURS le framework de sécurité obligatoire décrit dans la documentation (filtre ID_USER, table DEPOT, hashtags)
+- UTILISE les conventions d'aliasing recommandées dans la documentation (DEPOT → a, FACTS → b, etc.)
+- RÉFÈRE-TOI aux modèles de requêtes et filtres décrits dans la documentation pour les cas d'usage courants
+- COPIE la structure, les jointures et l'organisation des requêtes similaires appropriées
+- VÉRIFIE que les colonnes utilisées existent bien dans le schéma fourni
+- CONSERVE la même structure de filtrage et de regroupement que les exemples similaires
+- RESPEC LE FRAMEWORK DE JOINTURE OBLIGATOIRE avec la table DEPOT
+- N'INVENTE PAS de nouvelles jointures ou tables non présentes dans le schéma ou les exemples
 
-# SCHÉMA DE LA BASE DE DONNÉES
+# DOCUMENTATION COMPLÈTE DE LA BASE DE DONNÉES
 ```
 {formatted_schema}
 ```
@@ -124,11 +128,14 @@ SQL:
 Question: "{user_query}"
 
 # INSTRUCTIONS FINALES
-1. Identifie la requête similaire avec la structure la plus adaptée
-2. Adapte cette requête en gardant sa structure, jointures et organisation
-3. Modifie uniquement les colonnes, filtres et conditions nécessaires pour répondre à la nouvelle question
-4. Vérifie que tous les éléments du framework de sécurité sont présents
-5. Retourne UNIQUEMENT la requête SQL finale sans aucune explication
+1. CONSULTE D'ABORD la documentation pour sélectionner le motif de requête le plus approprié pour cette demande
+2. IDENTIFIE ENSUITE parmi les exemples la requête similaire avec la structure la plus adaptée
+3. ADAPTE cette requête en gardant sa structure, ses jointures et son organisation
+4. MODIFIE uniquement les colonnes, filtres et conditions nécessaires pour répondre à la nouvelle question
+5. VÉRIFIE que tous les éléments du framework de sécurité sont présents (filtre ID_USER, table DEPOT, hashtags)
+6. UTILISE les conventions d'aliasing recommandées dans la documentation
+7. VÉRIFIE la cohérence avec le schéma et les exemples de la documentation
+8. RETOURNE UNIQUEMENT la requête SQL finale sans aucune explication
 
 SQL:"""
     
