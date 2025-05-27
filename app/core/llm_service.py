@@ -1,30 +1,64 @@
-import aiohttp
-import logging
-import json
-from typing import Dict, Any, Optional, Tuple, List
+"""
+Service LLM unifié utilisant le Factory Pattern.
 
+Ce module remplace complètement l'ancien llm_service.py et utilise
+la nouvelle architecture avec Factory Pattern pour une meilleure maintenabilité.
+
+Author: Datasulting
+Version: 2.0.0
+"""
+
+import logging
+from typing import Dict, Any, List, Optional, Tuple
+from functools import lru_cache
+
+from .llm_factory import LLMFactory
+from .exceptions import LLMError, LLMConfigError
 from app.config import get_settings
 
-# Configuration du logger
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
 
 class LLMService:
     """
-    Service unifié pour interagir avec différentes API de modèles de langage.
-    Remplace complètement le module llm.py avec plus de flexibilité.
+    Service LLM unifié avec Factory Pattern.
+    
+    Remplace l'ancienne classe LLMService en utilisant le nouveau
+    Factory Pattern pour une architecture plus maintenable et extensible.
+    
+    Cette classe maintient la compatibilité avec l'API existante
+    tout en utilisant la nouvelle architecture en arrière-plan.
     """
     
-    @staticmethod
+    _factory: Optional[LLMFactory] = None
+    _settings = None
+    
+    @classmethod
+    def _get_factory(cls) -> LLMFactory:
+        """
+        Récupère l'instance de factory (lazy initialization).
+        
+        Returns:
+            Instance LLMFactory configurée
+        """
+        if cls._factory is None:
+            cls._settings = get_settings()
+            cls._factory = LLMFactory(cls._settings)
+            logger.debug("LLMFactory initialisée")
+        
+        return cls._factory
+    
+    @classmethod
     async def generate_completion(
-        messages: list,
+        cls,
+        messages: List[Dict[str, str]],
         provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
     ) -> str:
         """
-        Génère une complétion en utilisant le fournisseur et modèle spécifiés.
+        Génère une completion en utilisant le fournisseur et modèle spécifiés.
         
         Args:
             messages: Liste des messages pour le contexte
@@ -35,38 +69,42 @@ class LLMService:
             
         Returns:
             Texte généré par le modèle
+            
+        Raises:
+            LLMError: Si la génération échoue
         """
-        # Utiliser les valeurs par défaut si non spécifiées
-        if provider is None:
-            provider = settings.DEFAULT_PROVIDER
+        factory = cls._get_factory()
         
-        if temperature is None:
-            temperature = settings.LLM_TEMPERATURE
+        # Préparer les paramètres optionnels
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
         
-        # Déterminer quelle implémentation utiliser selon le fournisseur
-        if provider == "openai":
-            return await LLMService._generate_openai(messages, model, temperature, max_tokens)
-        elif provider == "anthropic":
-            return await LLMService._generate_anthropic(messages, model, temperature, max_tokens)
-        elif provider == "google":
-            return await LLMService._generate_google(messages, model, temperature, max_tokens)
-        else:
-            # Fallback sur OpenAI
-            logger.warning(f"Fournisseur '{provider}' non reconnu, utilisation d'OpenAI par défaut")
-            return await LLMService._generate_openai(messages, model, temperature, max_tokens)
+        try:
+            return await factory.generate_completion(
+                messages=messages,
+                provider=provider,
+                model=model,
+                **kwargs
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération completion: {e}")
+            raise
     
-    @staticmethod
+    @classmethod
     async def generate_sql(
+        cls,
         user_query: str,
         schema: str,
-        similar_queries: List[Dict] = None,
+        similar_queries: Optional[List[Dict]] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None
     ) -> Optional[str]:
         """
         Génère une requête SQL à partir d'une demande en langage naturel.
-        Remplace la fonction generate_sql de llm.py avec plus de flexibilité.
         
         Args:
             user_query: Requête en langage naturel
@@ -77,39 +115,26 @@ class LLMService:
             temperature: Température pour la génération
             
         Returns:
-            Requête SQL générée ou None/codes spéciaux
+            Requête SQL générée ou None en cas d'erreur
         """
-        # Construire le prompt (logique déplacée de translator.py si nécessaire)
-        prompt = LLMService._build_sql_prompt(user_query, schema, similar_queries or [])
-        
-        messages = [
-            {
-                "role": "system", 
-                "content": "Tu es un expert SQL spécialisé dans la traduction de langage naturel en requêtes SQL optimisées. Tu dois retourner UNIQUEMENT le code SQL, sans explications ni formatage markdown. Tu fais tout ton possible pour comprendre l'intention de l'utilisateur, même si la demande est vague."
-            },
-            {
-                "role": "user", 
-                "content": prompt
-            }
-        ]
+        factory = cls._get_factory()
         
         try:
-            response = await LLMService.generate_completion(
-                messages=messages,
+            return await factory.generate_sql(
+                user_query=user_query,
+                schema=schema,
+                similar_queries=similar_queries,
                 provider=provider,
                 model=model,
                 temperature=temperature
             )
-            
-            # Nettoyer la réponse (retirer markdown si présent)
-            return LLMService._clean_sql_response(response)
-            
         except Exception as e:
-            logger.error(f"Erreur lors de la génération SQL: {str(e)}")
-            raise
+            logger.error(f"Erreur lors de la génération SQL: {e}")
+            return None
     
-    @staticmethod
+    @classmethod
     async def validate_sql_semantically(
+        cls,
         sql_query: str,
         original_request: str,
         schema: str,
@@ -118,65 +143,34 @@ class LLMService:
     ) -> Tuple[bool, str]:
         """
         Valide qu'une requête SQL correspond sémantiquement à la demande originale.
-        Remplace validate_sql_query de llm.py.
-        """
-        prompt = f"""Tu es un expert SQL chargé d'analyser et de valider des requêtes SQL.
-
-La requête SQL suivante a été générée pour répondre à cette demande: "{original_request}"
-
-Requête SQL générée:
-```sql
-{sql_query}
-```
-
-Schéma de la base de données:
-```sql
-{schema}
-```
-
-TÂCHE:
-1. Vérifie si la demande concerne une requête SQL sur cette base de données
-2. Si oui, analyse si la requête SQL est compatible avec le schéma
-3. Évalue si la requête répond à l'intention de l'utilisateur
-4. RÉPONDS UNIQUEMENT par "OUI" ou "NON" ou "HORS SUJET"
-"""
         
-        messages = [
-            {
-                "role": "system",
-                "content": "Tu es un expert SQL qui valide la correspondance entre une demande et une requête SQL générée."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        Args:
+            sql_query: Requête SQL à valider
+            original_request: Demande originale en langage naturel
+            schema: Schéma de la base de données
+            provider: Fournisseur LLM pour la validation
+            model: Modèle spécifique
+            
+        Returns:
+            Tuple (is_valid, message)
+        """
+        factory = cls._get_factory()
         
         try:
-            response = await LLMService.generate_completion(
-                messages=messages,
+            return await factory.validate_sql_semantically(
+                sql_query=sql_query,
+                original_request=original_request,
+                schema=schema,
                 provider=provider,
-                model=model,
-                temperature=0.1
+                model=model
             )
-            
-            response_upper = response.upper()
-            if "HORS SUJET" in response_upper:
-                return False, "Cette demande ne concerne pas une requête SQL sur cette base de données."
-            elif "OUI" in response_upper:
-                return True, "La requête SQL correspond bien à votre demande et est compatible avec le schéma."
-            elif "NON" in response_upper:
-                return False, "La requête SQL pourrait ne pas correspondre parfaitement à votre demande."
-            else:
-                # Par défaut, considérer comme valide en cas d'ambiguïté
-                return True, "La requête SQL semble correspondre à votre demande."
-                
         except Exception as e:
-            logger.error(f"Erreur lors de la validation sémantique: {str(e)}")
-            return False, f"Impossible de valider la requête: {str(e)}"
+            logger.error(f"Erreur lors de la validation sémantique: {e}")
+            return False, f"Impossible de valider la requête: {e}"
     
-    @staticmethod
+    @classmethod
     async def explain_sql(
+        cls,
         sql_query: str,
         original_request: str,
         provider: Optional[str] = None,
@@ -184,386 +178,254 @@ TÂCHE:
     ) -> str:
         """
         Génère une explication en langage naturel d'une requête SQL.
-        Remplace get_sql_explanation de llm.py.
-        """
-        prompt = f"""Tu es un expert SQL qui explique des requêtes en langage simple.
-
-Demande originale: "{original_request}"
-
-Requête SQL générée:
-```sql
-{sql_query}
-```
-
-Explique en une phrase courte et simple ce que fait cette requête, sans termes techniques complexes.
-"""
         
-        messages = [
-            {
-                "role": "system",
-                "content": "Tu es un expert SQL qui explique des requêtes SQL de manière simple et accessible."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        Args:
+            sql_query: Requête SQL à expliquer
+            original_request: Demande originale
+            provider: Fournisseur LLM pour l'explication
+            model: Modèle spécifique
+            
+        Returns:
+            Explication en langage naturel
+        """
+        factory = cls._get_factory()
         
         try:
-            return await LLMService.generate_completion(
-                messages=messages,
+            return await factory.explain_sql(
+                sql_query=sql_query,
+                original_request=original_request,
                 provider=provider,
-                model=model,
-                temperature=0.3
+                model=model
             )
         except Exception as e:
-            logger.error(f"Erreur lors de l'explication SQL: {str(e)}")
+            logger.error(f"Erreur lors de l'explication SQL: {e}")
             return "Impossible d'obtenir une explication pour cette requête."
     
-    @staticmethod
+    @classmethod
     async def check_relevance(
+        cls,
         user_query: str,
         provider: Optional[str] = None,
         model: Optional[str] = None
     ) -> bool:
         """
         Vérifie si une requête est pertinente pour une base de données RH.
-        Remplace check_query_relevance de llm.py.
-        """
-        prompt = f"""Tu es un expert RH qui détermine si une question concerne une base de données RH.
-
-La base de données contient des informations sur :
-- Employés, contrats, rémunérations
-- Entreprises et établissements
-- Absences et arrêts de travail
-- Déclarations sociales (DSN)
-
-Question: "{user_query}"
-
-Cette question concerne-t-elle les ressources humaines ?
-Réponds UNIQUEMENT par "OUI" ou "NON".
-"""
         
-        messages = [
-            {
-                "role": "system",
-                "content": "Tu détermines si une question concerne les ressources humaines."
-            },
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
+        Args:
+            user_query: Question à vérifier
+            provider: Fournisseur LLM
+            model: Modèle spécifique
+            
+        Returns:
+            True si la question concerne les RH
+        """
+        factory = cls._get_factory()
         
         try:
-            response = await LLMService.generate_completion(
-                messages=messages,
+            return await factory.check_relevance(
+                user_query=user_query,
                 provider=provider,
-                model=model,
-                temperature=0.1
+                model=model
             )
-            return "OUI" in response.upper()
         except Exception as e:
-            logger.error(f"Erreur lors de la vérification de pertinence: {str(e)}")
+            logger.error(f"Erreur lors de la vérification de pertinence: {e}")
             return True  # Par défaut, considérer comme pertinent
     
-    @staticmethod
-    def _clean_sql_response(response: str) -> str:
-        """Nettoie la réponse du LLM en retirant le formatage markdown."""
-        if response.startswith("```sql"):
-            response = response.replace("```sql", "", 1)
-            if response.endswith("```"):
-                response = response[:-3]
-        elif response.startswith("```"):
-            response = response.replace("```", "", 1)
-            if response.endswith("```"):
-                response = response[:-3]
-        
-        return response.strip()
-    
-    @staticmethod
-    def _build_sql_prompt(user_query: str, schema: str, similar_queries: List[Dict]) -> str:
-        """Construit le prompt pour la génération SQL (peut être étendu plus tard)."""
-        # Version simplifiée - peut être étendue avec la logique complète de build_prompt
-        return f"""
-Traduis cette question en SQL en respectant le schéma fourni:
-
-Question: {user_query}
-
-Schéma:
-{schema}
-
-Tu dois ABSOLUMENT respecter ces règles:
-1. Inclure WHERE [alias_depot].ID_USER = ?
-2. Joindre avec la table DEPOT
-3. Ajouter les hashtags appropriés en fin (#DEPOT_alias# etc.)
-
-SQL:"""
-    
-    # Méthodes privées pour chaque provider (inchangées)
-    @staticmethod
-    async def _generate_openai(messages: list, model: Optional[str] = None, temperature: float = 0.2, max_tokens: Optional[int] = None) -> str:
-        # Code existant inchangé
-        if not settings.OPENAI_API_KEY:
-            raise ValueError("Clé API OpenAI non configurée")
-        
-        if model is None:
-            model = settings.DEFAULT_OPENAI_MODEL
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}"
-        }
-        
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature
-        }
-        
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=settings.LLM_TIMEOUT
-                ) as response:
-                    
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise RuntimeError(f"Erreur OpenAI ({response.status}): {error_text}")
-                    
-                    result = await response.json()
-                    return result["choices"][0]["message"]["content"].strip()
-        
-        except Exception as e:
-            logger.error(f"Erreur API OpenAI: {str(e)}")
-            raise
-    
-    @staticmethod
-    async def _generate_anthropic(messages: list, model: Optional[str] = None, temperature: float = 0.2, max_tokens: Optional[int] = None) -> str:
-        # Code existant inchangé
-        if not settings.ANTHROPIC_API_KEY:
-            raise ValueError("Clé API Anthropic non configurée")
-        
-        if model is None:
-            model = settings.DEFAULT_ANTHROPIC_MODEL
-        
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": settings.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01"
-        }
-        
-        # Convertir format OpenAI vers Anthropic
-        system_message = ""
-        user_messages = []
-        
-        for msg in messages:
-            if msg["role"] == "system":
-                system_message = msg["content"]
-            elif msg["role"] == "user":
-                user_messages.append({"role": "user", "content": msg["content"]})
-            elif msg["role"] == "assistant":
-                user_messages.append({"role": "assistant", "content": msg["content"]})
-        
-        payload = {
-            "model": model,
-            "system": system_message,
-            "messages": user_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens or 4000
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers=headers,
-                    json=payload,
-                    timeout=settings.LLM_TIMEOUT
-                ) as response:
-                    
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise RuntimeError(f"Erreur Anthropic ({response.status}): {error_text}")
-                    
-                    result = await response.json()
-                    return result["content"][0]["text"].strip()
-        
-        except Exception as e:
-            logger.error(f"Erreur API Anthropic: {str(e)}")
-            raise
-    
-    @staticmethod
-    async def _generate_google(messages: list, model: Optional[str] = None, temperature: float = 0.2, max_tokens: Optional[int] = None) -> str:
-        # Code existant inchangé
-        if not settings.GOOGLE_API_KEY:
-            raise ValueError("Clé API Google non configurée")
-        
-        if model is None:
-            model = settings.DEFAULT_GOOGLE_MODEL
-        
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        # Convertir format OpenAI vers Google Gemini
-        gemini_messages = []
-        system_content = None
-        
-        for msg in messages:
-            if msg["role"] == "system":
-                system_content = msg["content"]
-            elif msg["role"] == "user":
-                gemini_messages.append({"role": "user", "parts": [{"text": msg["content"]}]})
-            elif msg["role"] == "assistant":
-                gemini_messages.append({"role": "model", "parts": [{"text": msg["content"]}]})
-        
-        # Intégrer le message système dans le premier message utilisateur
-        if system_content and gemini_messages:
-            for msg in gemini_messages:
-                if msg["role"] == "user":
-                    msg["parts"][0]["text"] = f"Instructions système: {system_content}\n\nUtilisateur: {msg['parts'][0]['text']}"
-                    break
-        
-        payload = {
-            "contents": gemini_messages,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens or 4000
-            }
-        }
-        
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GOOGLE_API_KEY}"
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=settings.LLM_TIMEOUT
-                ) as response:
-                    
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise RuntimeError(f"Erreur Google ({response.status}): {error_text}")
-                    
-                    result = await response.json()
-                    return result["candidates"][0]["content"]["parts"][0]["text"].strip()
-        
-        except Exception as e:
-            logger.error(f"Erreur API Google: {str(e)}")
-            raise
-    
-    @staticmethod
-    async def check_services_health() -> Dict[str, Any]:
+    @classmethod
+    async def check_services_health(cls) -> Dict[str, Any]:
         """
         Vérifie l'état de santé de tous les services LLM configurés.
-        Remplace check_llm_service de llm.py.
+        
+        Returns:
+            Dictionnaire avec l'état de chaque service
         """
-        services_status = {}
+        factory = cls._get_factory()
         
-        # Tester chaque provider configuré
-        test_messages = [{"role": "user", "content": "Hello"}]
-        
-        # OpenAI
-        if settings.OPENAI_API_KEY:
-            try:
-                await LLMService._generate_openai(test_messages, temperature=0.1)
-                services_status["openai"] = {
-                    "status": "ok",
-                    "model": settings.DEFAULT_OPENAI_MODEL
-                }
-            except Exception as e:
-                services_status["openai"] = {
-                    "status": "error",
-                    "message": str(e)
-                }
-        else:
-            services_status["openai"] = {"status": "not_configured"}
-        
-        # Anthropic
-        if settings.ANTHROPIC_API_KEY:
-            try:
-                await LLMService._generate_anthropic(test_messages, temperature=0.1)
-                services_status["anthropic"] = {
-                    "status": "ok",
-                    "model": settings.DEFAULT_ANTHROPIC_MODEL
-                }
-            except Exception as e:
-                services_status["anthropic"] = {
-                    "status": "error",
-                    "message": str(e)
-                }
-        else:
-            services_status["anthropic"] = {"status": "not_configured"}
-        
-        # Google
-        if settings.GOOGLE_API_KEY:
-            try:
-                await LLMService._generate_google(test_messages, temperature=0.1)
-                services_status["google"] = {
-                    "status": "ok",
-                    "model": settings.DEFAULT_GOOGLE_MODEL
-                }
-            except Exception as e:
-                services_status["google"] = {
-                    "status": "error",
-                    "message": str(e)
-                }
-        else:
-            services_status["google"] = {"status": "not_configured"}
-        
-        # Déterminer le statut global
-        default_provider = settings.DEFAULT_PROVIDER
-        global_status = "ok"
-        
-        if default_provider in services_status and services_status[default_provider]["status"] != "ok":
-            global_status = "error"
-        
-        return {
-            "status": global_status,
-            "default_provider": default_provider,
-            "providers": services_status
-        }
+        try:
+            return await factory.health_check_all()
+        except Exception as e:
+            logger.error(f"Erreur lors du health check: {e}")
+            return {
+                "status": "error",
+                "default_provider": cls._settings.DEFAULT_PROVIDER if cls._settings else "unknown",
+                "providers": {},
+                "error": str(e)
+            }
     
-    @staticmethod
-    async def get_available_models() -> List[Dict[str, str]]:
+    @classmethod
+    async def get_available_models(cls) -> List[Dict[str, str]]:
         """
-        Récupère la liste des modèles disponibles pour chaque fournisseur.
+        Récupère la liste des modèles disponibles pour tous les fournisseurs.
+        
+        Returns:
+            Liste des modèles disponibles
         """
-        available_models = []
+        factory = cls._get_factory()
         
-        # OpenAI
-        if settings.OPENAI_API_KEY:
-            available_models.extend([
-                {"provider": "openai", "id": "gpt-4o", "name": "GPT-4o"},
-                {"provider": "openai", "id": "gpt-4o-mini", "name": "GPT-4o Mini"},
-                {"provider": "openai", "id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
-                {"provider": "openai", "id": "gpt-4", "name": "GPT-4"},
-                {"provider": "openai", "id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo"}
-            ])
+        try:
+            return await factory.get_available_models()
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des modèles: {e}")
+            return []
+    
+    @classmethod
+    def get_configured_providers(cls) -> List[str]:
+        """
+        Retourne la liste des providers correctement configurés.
         
-        # Anthropic
-        if settings.ANTHROPIC_API_KEY:
-            available_models.extend([
-                {"provider": "anthropic", "id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
-                {"provider": "anthropic", "id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet"},
-                {"provider": "anthropic", "id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"}
-            ])
+        Returns:
+            Liste des noms des providers configurés
+        """
+        factory = cls._get_factory()
         
-        # Google
-        if settings.GOOGLE_API_KEY:
-            available_models.extend([
-                {"provider": "google", "id": "gemini-pro", "name": "Gemini Pro"},
-                {"provider": "google", "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro"},
-                {"provider": "google", "id": "gemini-1.5-flash", "name": "Gemini 1.5 Flash"}
-            ])
+        try:
+            return factory.get_configured_providers()
+        except Exception as e:
+            logger.error(f"Erreur lors de la vérification des providers: {e}")
+            return []
+    
+    @classmethod
+    async def cleanup(cls):
+        """
+        Nettoie les ressources (à appeler lors de l'arrêt de l'application).
+        """
+        if cls._factory:
+            try:
+                await cls._factory.close()
+                cls._factory = None
+                logger.info("LLMService nettoyé")
+            except Exception as e:
+                logger.error(f"Erreur lors du nettoyage LLMService: {e}")
+
+
+# =============================================================================
+# FONCTIONS DE COMPATIBILITÉ AVEC L'ANCIEN CODE
+# =============================================================================
+# Ces fonctions maintiennent la compatibilité avec l'ancien code qui appelle
+# directement les fonctions du module llm_service.py
+
+async def generate_sql(
+    user_query: str,
+    schema: str,
+    similar_queries: Optional[List[Dict]] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    temperature: Optional[float] = None
+) -> Optional[str]:
+    """
+    Fonction de compatibilité pour generate_sql.
+    
+    DEPRECATED: Utilisez LLMService.generate_sql() à la place.
+    """
+    logger.warning("Utilisation de generate_sql() dépréciée. Utilisez LLMService.generate_sql()")
+    return await LLMService.generate_sql(
+        user_query=user_query,
+        schema=schema,
+        similar_queries=similar_queries,
+        provider=provider,
+        model=model,
+        temperature=temperature
+    )
+
+
+async def validate_sql_query(
+    sql_query: str,
+    original_request: str,
+    schema: str,
+    provider: Optional[str] = None,
+    model: Optional[str] = None
+) -> Tuple[bool, str]:
+    """
+    Fonction de compatibilité pour validate_sql_query.
+    
+    DEPRECATED: Utilisez LLMService.validate_sql_semantically() à la place.
+    """
+    logger.warning("Utilisation de validate_sql_query() dépréciée. Utilisez LLMService.validate_sql_semantically()")
+    return await LLMService.validate_sql_semantically(
+        sql_query=sql_query,
+        original_request=original_request,
+        schema=schema,
+        provider=provider,
+        model=model
+    )
+
+
+async def get_sql_explanation(
+    sql_query: str,
+    original_request: str,
+    provider: Optional[str] = None,
+    model: Optional[str] = None
+) -> str:
+    """
+    Fonction de compatibilité pour get_sql_explanation.
+    
+    DEPRECATED: Utilisez LLMService.explain_sql() à la place.
+    """
+    logger.warning("Utilisation de get_sql_explanation() dépréciée. Utilisez LLMService.explain_sql()")
+    return await LLMService.explain_sql(
+        sql_query=sql_query,
+        original_request=original_request,
+        provider=provider,
+        model=model
+    )
+
+
+async def check_query_relevance(
+    user_query: str,
+    provider: Optional[str] = None,
+    model: Optional[str] = None
+) -> bool:
+    """
+    Fonction de compatibilité pour check_query_relevance.
+    
+    DEPRECATED: Utilisez LLMService.check_relevance() à la place.
+    """
+    logger.warning("Utilisation de check_query_relevance() dépréciée. Utilisez LLMService.check_relevance()")
+    return await LLMService.check_relevance(
+        user_query=user_query,
+        provider=provider,
+        model=model
+    )
+
+
+async def check_llm_service() -> Dict[str, Any]:
+    """
+    Fonction de compatibilité pour check_llm_service.
+    
+    DEPRECATED: Utilisez LLMService.check_services_health() à la place.
+    """
+    logger.warning("Utilisation de check_llm_service() dépréciée. Utilisez LLMService.check_services_health()")
+    return await LLMService.check_services_health()
+
+
+# =============================================================================
+# INITIALISATION ET NETTOYAGE DE L'APPLICATION
+# =============================================================================
+
+async def initialize_llm_service():
+    """
+    Initialise le service LLM (appelé au démarrage de l'application).
+    """
+    try:
+        # Forcer l'initialisation de la factory
+        LLMService._get_factory()
         
-        return available_models
+        # Vérifier les providers configurés
+        configured_providers = LLMService.get_configured_providers()
+        logger.info(f"LLMService initialisé avec providers: {configured_providers}")
+        
+        # Optionnel: vérifier la santé des services
+        health = await LLMService.check_services_health()
+        if health["status"] != "ok":
+            logger.warning(f"Certains services LLM ne sont pas disponibles: {health}")
+        
+    except Exception as e:
+        logger.error(f"Erreur lors de l'initialisation LLMService: {e}")
+        raise
+
+
+async def cleanup_llm_service():
+    """
+    Nettoie le service LLM (appelé à l'arrêt de l'application).
+    """
+    await LLMService.cleanup()

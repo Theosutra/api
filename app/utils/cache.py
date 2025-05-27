@@ -1,4 +1,4 @@
-# app/utils/cache.py - Version corrigée
+# app/utils/cache.py - Version avec exceptions centralisées
 import json
 import logging
 import hashlib
@@ -8,6 +8,7 @@ import time
 import os
 from functools import wraps
 from app.config import get_settings
+from app.core.exceptions import CacheError  # NOUVELLE IMPORT
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -20,36 +21,72 @@ CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
 # Client Redis (initialisé de manière paresseuse)
 _redis_client = None
 
+
 async def get_redis_client() -> Optional[redis.Redis]:
     """
-    Récupère un client Redis de manière paresseuse.
+    Récupère un client Redis de manière paresseuse avec gestion d'erreurs améliorée.
     
     Returns:
         Client Redis ou None si la connexion échoue
+        
+    Raises:
+        CacheError: Si erreur critique Redis en production
     """
     global _redis_client
     if _redis_client is None:
         try:
+            if not REDIS_URL:
+                raise CacheError("REDIS_URL non configurée", "connection")
+            
             logger.info(f"Initialisation du client Redis: {REDIS_URL}")
             _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            # Vérifier la connexion
-            await _redis_client.ping()
+            
+            # Vérifier la connexion avec timeout court
+            await asyncio.wait_for(_redis_client.ping(), timeout=5.0)
             logger.info("Connexion Redis établie avec succès")
-        except Exception as e:
-            logger.error(f"Erreur lors de l'initialisation de Redis: {str(e)}")
-            # En mode développement, on continue même sans Redis
+        
+        except asyncio.TimeoutError:
+            error_msg = "Timeout lors de la connexion Redis"
+            logger.error(error_msg)
+            _redis_client = None
+            
+            # En mode développement, on continue sans Redis
             if os.getenv("ENVIRONMENT") != "production":
                 logger.warning("Redis non disponible, le cache sera désactivé")
                 return None
             else:
-                # En production, on réessaie pour être sûr
-                raise RuntimeError(f"Impossible de se connecter à Redis: {str(e)}")
+                raise CacheError(error_msg, "connection")
+        
+        except redis.ConnectionError as e:
+            error_msg = f"Erreur de connexion Redis: {str(e)}"
+            logger.error(error_msg)
+            _redis_client = None
+            
+            # En mode développement, on continue sans Redis
+            if os.getenv("ENVIRONMENT") != "production":
+                logger.warning("Redis non disponible, le cache sera désactivé")
+                return None
+            else:
+                raise CacheError(error_msg, "connection")
+        
+        except Exception as e:
+            error_msg = f"Erreur lors de l'initialisation de Redis: {str(e)}"
+            logger.error(error_msg)
+            _redis_client = None
+            
+            # En mode développement, on continue sans Redis
+            if os.getenv("ENVIRONMENT") != "production":
+                logger.warning("Redis non disponible, le cache sera désactivé")
+                return None
+            else:
+                raise CacheError(error_msg, "initialization")
     
     return _redis_client
 
+
 def generate_cache_key(prefix: str, *args, **kwargs) -> str:
     """
-    Génère une clé de cache cohérente à partir des arguments.
+    Génère une clé de cache cohérente à partir des arguments avec validation.
     
     Args:
         prefix: Préfixe pour la clé (ex: 'translate')
@@ -57,53 +94,113 @@ def generate_cache_key(prefix: str, *args, **kwargs) -> str:
         
     Returns:
         Clé de cache unique
+        
+    Raises:
+        CacheError: Si les paramètres sont invalides
     """
-    # Filtrer les arguments qui ne doivent pas être dans la clé de cache
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['store_result', 'provider']}
+    try:
+        if not prefix or not isinstance(prefix, str):
+            raise CacheError("Le préfixe de clé cache doit être une chaîne non vide", "key_generation")
+        
+        # Filtrer les arguments qui ne doivent pas être dans la clé de cache
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in ['store_result', 'provider']}
+        
+        # Convertir les arguments en chaîne JSON
+        key_data = {
+            "args": args,
+            "kwargs": filtered_kwargs
+        }
+        
+        # Générer un hash pour les données
+        key_string = json.dumps(key_data, sort_keys=True, ensure_ascii=True)
+        key_hash = hashlib.md5(key_string.encode('utf-8')).hexdigest()
+        
+        # Construire la clé finale avec limitations de longueur
+        cache_key = f"nl2sql:{prefix}:{key_hash}"
+        
+        # Redis a une limite de 512MB par clé, mais on limite à 250 caractères pour être sûr
+        if len(cache_key) > 250:
+            logger.warning(f"Clé cache très longue ({len(cache_key)} chars), hachage supplémentaire")
+            cache_key = f"nl2sql:{prefix}:{hashlib.sha256(cache_key.encode()).hexdigest()}"
+        
+        return cache_key
     
-    # Convertir les arguments en chaîne JSON
-    key_data = {
-        "args": args,
-        "kwargs": filtered_kwargs
-    }
-    
-    # Générer un hash pour les données
-    key_hash = hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
-    
-    return f"nl2sql:{prefix}:{key_hash}"
+    except json.JSONEncodeError as e:
+        raise CacheError(f"Erreur lors de la sérialisation des arguments de clé: {e}", "key_generation")
+    except Exception as e:
+        raise CacheError(f"Erreur lors de la génération de clé cache: {e}", "key_generation")
+
 
 async def cache_get(key: str) -> Optional[Dict[str, Any]]:
     """
-    Récupère une valeur du cache.
+    Récupère une valeur du cache avec gestion d'erreurs robuste.
     
     Args:
         key: Clé de cache
         
     Returns:
         Valeur du cache ou None si non trouvée
+        
+    Raises:
+        CacheError: Si erreur critique Redis (uniquement en production)
     """
     if not CACHE_ENABLED:
         return None
-        
+    
+    if not key or not isinstance(key, str):
+        logger.warning("Clé de cache invalide")
+        return None
+    
     client = await get_redis_client()
     if client is None:
         return None
     
     try:
-        cached_value = await client.get(key)
+        # Récupérer avec timeout
+        cached_value = await asyncio.wait_for(client.get(key), timeout=2.0)
+        
         if cached_value:
-            logger.debug(f"Cache hit pour la clé: {key}")
-            return json.loads(cached_value)
+            logger.debug(f"Cache hit pour la clé: {key[:50]}...")
+            
+            try:
+                return json.loads(cached_value)
+            except json.JSONDecodeError as e:
+                logger.error(f"Données cache corrompues pour la clé {key}: {e}")
+                # Supprimer la clé corrompue
+                try:
+                    await client.delete(key)
+                except Exception:
+                    pass  # Ignorer les erreurs de suppression
+                return None
         else:
-            logger.debug(f"Cache miss pour la clé: {key}")
+            logger.debug(f"Cache miss pour la clé: {key[:50]}...")
             return None
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du cache: {str(e)}")
+    
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout lors de la récupération cache pour {key}")
         return None
+    
+    except redis.ConnectionError as e:
+        logger.warning(f"Erreur de connexion Redis lors de la récupération: {e}")
+        # Réinitialiser le client pour la prochaine tentative
+        global _redis_client
+        _redis_client = None
+        return None
+    
+    except Exception as e:
+        error_msg = f"Erreur lors de la récupération du cache: {str(e)}"
+        logger.error(error_msg)
+        
+        # En production, lever une exception pour les erreurs critiques
+        if os.getenv("ENVIRONMENT") == "production":
+            raise CacheError(error_msg, "get")
+        else:
+            return None
+
 
 async def cache_set(key: str, value: Dict[str, Any], ttl: int = REDIS_TTL) -> bool:
     """
-    Stocke une valeur dans le cache.
+    Stocke une valeur dans le cache avec validation et gestion d'erreurs.
     
     Args:
         key: Clé de cache
@@ -112,29 +209,82 @@ async def cache_set(key: str, value: Dict[str, Any], ttl: int = REDIS_TTL) -> bo
         
     Returns:
         True si l'opération a réussi, False sinon
+        
+    Raises:
+        CacheError: Si erreur critique Redis (uniquement en production)
     """
     if not CACHE_ENABLED:
         return False
-        
+    
+    # Validation des paramètres
+    if not key or not isinstance(key, str):
+        logger.warning("Clé de cache invalide pour le stockage")
+        return False
+    
+    if not isinstance(value, dict):
+        logger.warning("La valeur à mettre en cache doit être un dictionnaire")
+        return False
+    
+    if not isinstance(ttl, int) or ttl <= 0:
+        logger.warning(f"TTL invalide ({ttl}), utilisation de la valeur par défaut")
+        ttl = REDIS_TTL
+    
+    # Limiter le TTL maximum à 7 jours
+    if ttl > 604800:
+        logger.warning(f"TTL très élevé ({ttl}s), limitation à 7 jours")
+        ttl = 604800
+    
     client = await get_redis_client()
     if client is None:
         return False
     
     try:
         # Sérialiser la valeur
-        value_json = json.dumps(value)
+        try:
+            value_json = json.dumps(value, ensure_ascii=True, separators=(',', ':'))
+        except (TypeError, ValueError) as e:
+            logger.error(f"Erreur de sérialisation JSON: {e}")
+            return False
         
-        # Stocker avec un TTL
-        await client.setex(key, ttl, value_json)
-        logger.debug(f"Valeur mise en cache avec la clé: {key} (TTL: {ttl}s)")
+        # Vérifier la taille (Redis limite à 512MB, on limite à 10MB pour être sûr)
+        if len(value_json) > 10 * 1024 * 1024:  # 10MB
+            logger.warning(f"Valeur cache très grande ({len(value_json)} bytes), stockage ignoré")
+            return False
+        
+        # Stocker avec un TTL et timeout
+        await asyncio.wait_for(
+            client.setex(key, ttl, value_json),
+            timeout=5.0
+        )
+        
+        logger.debug(f"Valeur mise en cache avec la clé: {key[:50]}... (TTL: {ttl}s, taille: {len(value_json)} bytes)")
         return True
-    except Exception as e:
-        logger.error(f"Erreur lors du stockage dans le cache: {str(e)}")
+    
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout lors du stockage cache pour {key}")
         return False
+    
+    except redis.ConnectionError as e:
+        logger.warning(f"Erreur de connexion Redis lors du stockage: {e}")
+        # Réinitialiser le client pour la prochaine tentative
+        global _redis_client
+        _redis_client = None
+        return False
+    
+    except Exception as e:
+        error_msg = f"Erreur lors du stockage dans le cache: {str(e)}"
+        logger.error(error_msg)
+        
+        # En production, lever une exception pour les erreurs critiques
+        if os.getenv("ENVIRONMENT") == "production":
+            raise CacheError(error_msg, "set")
+        else:
+            return False
+
 
 async def cache_invalidate(key: str) -> bool:
     """
-    Invalide une clé de cache.
+    Invalide une clé de cache avec gestion d'erreurs.
     
     Args:
         key: Clé de cache
@@ -144,22 +294,32 @@ async def cache_invalidate(key: str) -> bool:
     """
     if not CACHE_ENABLED:
         return False
-        
+    
+    if not key or not isinstance(key, str):
+        logger.warning("Clé de cache invalide pour l'invalidation")
+        return False
+    
     client = await get_redis_client()
     if client is None:
         return False
     
     try:
-        await client.delete(key)
-        logger.debug(f"Clé de cache invalidée: {key}")
+        result = await asyncio.wait_for(client.delete(key), timeout=2.0)
+        logger.debug(f"Clé de cache invalidée: {key[:50]}... (résultat: {result})")
         return True
+    
+    except asyncio.TimeoutError:
+        logger.warning(f"Timeout lors de l'invalidation cache pour {key}")
+        return False
+    
     except Exception as e:
         logger.error(f"Erreur lors de l'invalidation du cache: {str(e)}")
         return False
 
+
 async def cache_pattern_invalidate(pattern: str) -> int:
     """
-    Invalide toutes les clés correspondant à un motif.
+    Invalide toutes les clés correspondant à un motif avec gestion d'erreurs.
     
     Args:
         pattern: Motif de clé (ex: 'nl2sql:translate:*')
@@ -169,30 +329,54 @@ async def cache_pattern_invalidate(pattern: str) -> int:
     """
     if not CACHE_ENABLED:
         return 0
-        
+    
+    if not pattern or not isinstance(pattern, str):
+        logger.warning("Motif de cache invalide")
+        return 0
+    
     client = await get_redis_client()
     if client is None:
         return 0
     
     try:
-        # Récupérer toutes les clés correspondant au motif
+        # Récupérer toutes les clés correspondant au motif avec timeout
         keys = []
-        async for key in client.scan_iter(match=pattern):
+        async for key in client.scan_iter(match=pattern, count=100):
             keys.append(key)
+            # Limitation pour éviter de surcharger Redis
+            if len(keys) >= 1000:
+                logger.warning(f"Trop de clés à invalider ({len(keys)}), arrêt à 1000")
+                break
         
-        # Supprimer les clés
+        # Supprimer les clés par batches
         if keys:
-            count = await client.delete(*keys)
-            logger.debug(f"{count} clés de cache invalidées avec le motif: {pattern}")
-            return count
+            batch_size = 100
+            total_deleted = 0
+            
+            for i in range(0, len(keys), batch_size):
+                batch_keys = keys[i:i + batch_size]
+                try:
+                    count = await asyncio.wait_for(
+                        client.delete(*batch_keys),
+                        timeout=5.0
+                    )
+                    total_deleted += count
+                except Exception as e:
+                    logger.warning(f"Erreur lors de la suppression du batch {i}: {e}")
+            
+            logger.debug(f"{total_deleted} clés de cache invalidées avec le motif: {pattern}")
+            return total_deleted
+        
         return 0
+    
     except Exception as e:
         logger.error(f"Erreur lors de l'invalidation du cache par motif: {str(e)}")
         return 0
 
+
 def cached(ttl: int = REDIS_TTL):
     """
-    Décorateur pour mettre en cache les résultats d'une fonction asynchrone.
+    Décorateur pour mettre en cache les résultats d'une fonction asynchrone avec gestion d'erreurs.
     Respecte le paramètre use_cache passé dans les kwargs.
     
     Args:
@@ -214,33 +398,52 @@ def cached(ttl: int = REDIS_TTL):
                     result["from_cache"] = False
                 return result
             
-            # Générer la clé de cache
-            prefix = f"{func.__module__}:{func.__name__}"
-            cache_key = generate_cache_key(prefix, *args, **kwargs)
+            try:
+                # Générer la clé de cache
+                prefix = f"{func.__module__}:{func.__name__}"
+                cache_key = generate_cache_key(prefix, *args, **kwargs)
+                
+                # Essayer de récupérer du cache
+                cached_result = await cache_get(cache_key)
+                if cached_result is not None:
+                    # Ajouter une indication que le résultat vient du cache
+                    cached_result["from_cache"] = True
+                    return cached_result
             
-            # Essayer de récupérer du cache
-            cached_result = await cache_get(cache_key)
-            if cached_result is not None:
-                # Ajouter une indication que le résultat vient du cache
-                cached_result["from_cache"] = True
-                return cached_result
+            except CacheError as e:
+                logger.warning(f"Erreur cache lors de la récupération, exécution normale: {e}")
+                # Continuer sans cache en cas d'erreur
+            except Exception as e:
+                logger.warning(f"Erreur inattendue cache lors de la récupération: {e}")
+                # Continuer sans cache en cas d'erreur
             
             # Exécuter la fonction
             start_time = time.time()
             result = await func(*args, **kwargs)
             execution_time = time.time() - start_time
             
-            # Stocker dans le cache seulement si store_result n'est pas False
-            if result.get("status") == "success" and kwargs.get("store_result", True):
-                # Ajouter le temps d'exécution dans les métadonnées
-                if "processing_time" in result:
-                    result["execution_time"] = execution_time
+            # Stocker dans le cache seulement si le résultat est valide et store_result n'est pas False
+            if (isinstance(result, dict) and 
+                result.get("status") == "success" and 
+                kwargs.get("store_result", True)):
                 
-                # Indiquer que le résultat ne vient pas du cache
-                result["from_cache"] = False
+                try:
+                    # Ajouter le temps d'exécution dans les métadonnées
+                    if "processing_time" in result:
+                        result["execution_time"] = execution_time
+                    
+                    # Indiquer que le résultat ne vient pas du cache
+                    result["from_cache"] = False
+                    
+                    # Mettre en cache
+                    await cache_set(cache_key, result, ttl)
                 
-                # Mettre en cache
-                await cache_set(cache_key, result, ttl)
+                except CacheError as e:
+                    logger.warning(f"Erreur cache lors du stockage: {e}")
+                    # Continuer même si la mise en cache échoue
+                except Exception as e:
+                    logger.warning(f"Erreur inattendue cache lors du stockage: {e}")
+                    # Continuer même si la mise en cache échoue
             else:
                 # Pas de mise en cache, mais indiquer que ce n'est pas du cache
                 if isinstance(result, dict):
@@ -251,3 +454,59 @@ def cached(ttl: int = REDIS_TTL):
         return wrapper
     
     return decorator
+
+
+async def get_cache_stats() -> Dict[str, Any]:
+    """
+    Récupère les statistiques du cache Redis.
+    
+    Returns:
+        Dictionnaire avec les statistiques
+    """
+    if not CACHE_ENABLED:
+        return {"status": "disabled"}
+    
+    client = await get_redis_client()
+    if client is None:
+        return {"status": "unavailable"}
+    
+    try:
+        info = await client.info()
+        
+        return {
+            "status": "ok",
+            "memory_used": info.get("used_memory_human", "unknown"),
+            "connected_clients": info.get("connected_clients", 0),
+            "total_commands_processed": info.get("total_commands_processed", 0),
+            "keyspace_hits": info.get("keyspace_hits", 0),
+            "keyspace_misses": info.get("keyspace_misses", 0),
+            "hit_rate": round(
+                info.get("keyspace_hits", 0) / max(
+                    info.get("keyspace_hits", 0) + info.get("keyspace_misses", 0), 1
+                ) * 100, 2
+            ) if info.get("keyspace_hits", 0) + info.get("keyspace_misses", 0) > 0 else 0
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des stats Redis: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+async def cleanup_cache_service():
+    """
+    Nettoie les ressources du service de cache.
+    Utile lors de l'arrêt de l'application.
+    """
+    global _redis_client
+    try:
+        if _redis_client and not _redis_client.closed:
+            await _redis_client.close()
+            _redis_client = None
+            logger.info("Service de cache nettoyé")
+    
+    except Exception as e:
+        logger.warning(f"Erreur lors du nettoyage du cache: {e}")
+
+
+# Import nécessaire pour asyncio
+import asyncio
