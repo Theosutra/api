@@ -374,86 +374,8 @@ async def cache_pattern_invalidate(pattern: str) -> int:
         return 0
 
 
-def cached(ttl: int = REDIS_TTL):
-    """
-    Décorateur pour mettre en cache les résultats d'une fonction asynchrone avec gestion d'erreurs.
-    Respecte le paramètre use_cache passé dans les kwargs.
-    
-    Args:
-        ttl: Durée de vie en secondes (par défaut 1 heure)
-        
-    Returns:
-        Décorateur
-    """
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Vérifier si le cache est activé globalement ET pour cette requête
-            use_cache_for_request = kwargs.get('use_cache', True)
-            
-            if not CACHE_ENABLED or not use_cache_for_request:
-                # Cache désactivé globalement ou pour cette requête spécifique
-                result = await func(*args, **kwargs)
-                if isinstance(result, dict):
-                    result["from_cache"] = False
-                return result
-            
-            try:
-                # Générer la clé de cache
-                prefix = f"{func.__module__}:{func.__name__}"
-                cache_key = generate_cache_key(prefix, *args, **kwargs)
-                
-                # Essayer de récupérer du cache
-                cached_result = await cache_get(cache_key)
-                if cached_result is not None:
-                    # Ajouter une indication que le résultat vient du cache
-                    cached_result["from_cache"] = True
-                    return cached_result
-            
-            except CacheError as e:
-                logger.warning(f"Erreur cache lors de la récupération, exécution normale: {e}")
-                # Continuer sans cache en cas d'erreur
-            except Exception as e:
-                logger.warning(f"Erreur inattendue cache lors de la récupération: {e}")
-                # Continuer sans cache en cas d'erreur
-            
-            # Exécuter la fonction
-            start_time = time.time()
-            result = await func(*args, **kwargs)
-            execution_time = time.time() - start_time
-            
-            # Stocker dans le cache seulement si le résultat est valide et store_result n'est pas False
-            if (isinstance(result, dict) and 
-                result.get("status") == "success" and 
-                kwargs.get("store_result", True)):
-                
-                try:
-                    # Ajouter le temps d'exécution dans les métadonnées
-                    if "processing_time" in result:
-                        result["execution_time"] = execution_time
-                    
-                    # Indiquer que le résultat ne vient pas du cache
-                    result["from_cache"] = False
-                    
-                    # Mettre en cache
-                    await cache_set(cache_key, result, ttl)
-                
-                except CacheError as e:
-                    logger.warning(f"Erreur cache lors du stockage: {e}")
-                    # Continuer même si la mise en cache échoue
-                except Exception as e:
-                    logger.warning(f"Erreur inattendue cache lors du stockage: {e}")
-                    # Continuer même si la mise en cache échoue
-            else:
-                # Pas de mise en cache, mais indiquer que ce n'est pas du cache
-                if isinstance(result, dict):
-                    result["from_cache"] = False
-            
-            return result
-        
-        return wrapper
-    
-    return decorator
+# DÉCORATEUR @cached DÉPLACÉ VERS app/utils/cache_decorator.py
+# pour éviter les dépendances circulaires avec les services
 
 
 async def get_cache_stats() -> Dict[str, Any]:
