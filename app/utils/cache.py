@@ -4,6 +4,7 @@ import logging
 import hashlib
 from typing import Any, Optional, Dict, Tuple, Union
 import redis.asyncio as redis
+import asyncio
 import time
 import os
 from functools import wraps
@@ -428,7 +429,3 @@ async def cleanup_cache_service():
     
     except Exception as e:
         logger.warning(f"Erreur lors du nettoyage du cache: {e}")
-
-
-# Import nécessaire pour asyncio
-import asyncio
