@@ -21,6 +21,7 @@ _index = None
 def _init_pinecone():
     """
     Initialise le client Pinecone et l'index de manière paresseuse.
+    Compatible avec Pinecone Serverless et Pod-based.
     
     Returns:
         L'index Pinecone initialisé
@@ -40,7 +41,7 @@ def _init_pinecone():
             logger.info(f"Initialisation de Pinecone avec l'index '{settings.PINECONE_INDEX_NAME}'")
             _pc = Pinecone(api_key=settings.PINECONE_API_KEY)
             
-            # Vérifier si l'index existe
+            # Vérifier si l'index existe (compatible Serverless et Pod-based)
             try:
                 indexes = _pc.list_indexes()
                 index_exists = any(idx.name == settings.PINECONE_INDEX_NAME for idx in indexes)
@@ -49,21 +50,13 @@ def _init_pinecone():
                 raise VectorSearchError(f"Impossible de vérifier les indexes Pinecone: {e}", settings.PINECONE_INDEX_NAME)
             
             if not index_exists:
-                logger.warning(f"L'index '{settings.PINECONE_INDEX_NAME}' n'existe pas, création...")
-                try:
-                    # Créer l'index s'il n'existe pas
-                    _pc.create_index(
-                        name=settings.PINECONE_INDEX_NAME,
-                        dimension=768,  # Dimension par défaut pour all-mpnet-base-v2
-                        metric="cosine",
-                        spec=PodSpec(
-                            environment=settings.PINECONE_ENVIRONMENT
-                        )
-                    )
-                    logger.info(f"Index '{settings.PINECONE_INDEX_NAME}' créé avec succès")
-                except Exception as e:
-                    logger.error(f"Erreur lors de la création de l'index: {e}")
-                    raise VectorSearchError(f"Impossible de créer l'index '{settings.PINECONE_INDEX_NAME}': {e}", settings.PINECONE_INDEX_NAME)
+                # L'index n'existe pas - ne pas le créer automatiquement
+                # car on ne connaît pas le type (Serverless vs Pod-based)
+                raise VectorSearchError(
+                    f"L'index '{settings.PINECONE_INDEX_NAME}' n'existe pas. "
+                    f"Veuillez le créer manuellement ou vérifier le nom dans la configuration.",
+                    settings.PINECONE_INDEX_NAME
+                )
             
             try:
                 _index = _pc.Index(settings.PINECONE_INDEX_NAME)
@@ -355,6 +348,7 @@ async def store_query(
 async def check_pinecone_service() -> dict:
     """
     Vérifie que le service Pinecone fonctionne correctement.
+    Compatible avec Pinecone Serverless et Pod-based.
     
     Returns:
         Dictionnaire indiquant le statut du service
@@ -370,16 +364,47 @@ async def check_pinecone_service() -> dict:
             logger.error(f"Erreur lors de la récupération des statistiques: {e}")
             raise VectorSearchError(f"Impossible d'accéder aux statistiques de l'index: {e}", settings.PINECONE_INDEX_NAME)
         
-        # Valider les statistiques
-        if not isinstance(stats, dict):
-            raise VectorSearchError("Format de statistiques invalide", settings.PINECONE_INDEX_NAME)
+        # Gestion du format Serverless (nouveau) vs Pod-based (ancien)
+        total_vector_count = 0
+        dimension = 0
+        namespaces = {}
+        
+        if hasattr(stats, 'total_vector_count'):
+            # Format Serverless - les valeurs sont des propriétés directes
+            total_vector_count = getattr(stats, 'total_vector_count', 0)
+            dimension = getattr(stats, 'dimension', 0) 
+            namespaces = getattr(stats, 'namespaces', {})
+        elif isinstance(stats, dict):
+            # Format Pod-based - dictionnaire classique
+            total_vector_count = stats.get('total_vector_count', 0)
+            dimension = stats.get('dimension', 0)
+            namespaces = stats.get('namespaces', {})
+        else:
+            # Tentative de conversion en dictionnaire
+            try:
+                if hasattr(stats, 'to_dict'):
+                    stats_dict = stats.to_dict()
+                elif hasattr(stats, '__dict__'):
+                    stats_dict = stats.__dict__
+                else:
+                    stats_dict = {}
+                
+                total_vector_count = stats_dict.get('total_vector_count', 0)
+                dimension = stats_dict.get('dimension', 0)
+                namespaces = stats_dict.get('namespaces', {})
+            except Exception:
+                # Fallback - juste vérifier que l'index est accessible
+                logger.warning(f"Format de statistiques non reconnu: {type(stats)}, mais l'index est accessible")
+                total_vector_count = "unknown"
+                dimension = "unknown"
+                namespaces = {}
         
         return {
             "status": "ok",
             "index": settings.PINECONE_INDEX_NAME,
-            "vector_count": stats.get('total_vector_count', 0),
-            "dimensions": stats.get('dimension', 0),
-            "namespaces": stats.get('namespaces', {}),
+            "vector_count": total_vector_count,
+            "dimensions": dimension,
+            "namespaces": namespaces,
             "test_successful": True
         }
     

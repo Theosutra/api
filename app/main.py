@@ -3,6 +3,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 import time
 import os
 import asyncio
@@ -25,41 +26,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Créer l'application FastAPI
-app = FastAPI(
-    title="NL2SQL API",
-    description="""
-    API pour traduire des requêtes en langage naturel en SQL.
-    Utilise une combinaison de recherche vectorielle et de génération via LLM pour produire des requêtes SQL optimisées.
-    
-    Version 2.0.0 - Architecture Service Layer avec validation unifiée.
-    """,
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json"
-)
-
-# Configurer la sécurité de l'application
-configure_security(app)
-
-# Inclure les routes
-app.include_router(router, prefix=settings.API_PREFIX)
-
 # Services globaux (initialisés au démarrage)
 translation_service: TranslationService = None
 validation_service: ValidationService = None
 
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """
-    Événements de démarrage de l'application avec Service Layer.
-    
-    Initialise tous les services nécessaires au bon fonctionnement de l'API.
+    Gestionnaire de cycle de vie de l'application avec Service Layer.
+    Remplace les anciens on_event("startup") et on_event("shutdown").
     """
     global translation_service, validation_service
     
+    # === STARTUP ===
     logger.info("🚀 Démarrage de NL2SQL API v2.0.0 - Service Layer Architecture")
     
     try:
@@ -132,19 +112,12 @@ async def startup_event():
         
     except Exception as e:
         logger.error(f"❌ Erreur lors du démarrage: {e}")
-        # Ne pas faire planter l'application, mais alerter
         logger.warning("L'application démarre malgré les erreurs d'initialisation")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Événements d'arrêt de l'application avec nettoyage des services.
     
-    Nettoie proprement toutes les ressources avant l'arrêt.
-    """
-    global translation_service, validation_service
+    # Application prête - yield permet à FastAPI de continuer
+    yield
     
+    # === SHUTDOWN ===
     logger.info("🛑 Arrêt de NL2SQL API - Service Layer")
     
     try:
@@ -152,8 +125,6 @@ async def shutdown_event():
         logger.info("🧹 Nettoyage des services métier...")
         
         if translation_service:
-            # Les services n'ont pas de méthode cleanup spécifique,
-            # mais on peut ajouter des nettoyages si nécessaire
             translation_service = None
             logger.info("✅ Service de traduction nettoyé")
         
@@ -192,6 +163,29 @@ async def shutdown_event():
         
     except Exception as e:
         logger.error(f"❌ Erreur lors de l'arrêt: {e}")
+
+
+# Créer l'application FastAPI avec le nouveau gestionnaire de cycle de vie
+app = FastAPI(
+    title="NL2SQL API",
+    description="""
+    API pour traduire des requêtes en langage naturel en SQL.
+    Utilise une combinaison de recherche vectorielle et de génération via LLM pour produire des requêtes SQL optimisées.
+    
+    Version 2.0.0 - Architecture Service Layer avec validation unifiée.
+    """,
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan  # Nouveau gestionnaire de cycle de vie
+)
+
+# Configurer la sécurité de l'application
+configure_security(app)
+
+# Inclure les routes
+app.include_router(router, prefix=settings.API_PREFIX)
 
 
 @app.middleware("http")
@@ -349,6 +343,8 @@ async def get_metrics():
         Métriques de performance de l'API et des services
     """
     try:
+        from app.core.llm_service import LLMService
+        
         # Métriques des services LLM
         llm_health = await LLMService.check_services_health()
         
