@@ -5,7 +5,7 @@ Version modifiée pour utiliser le PromptManager centralisé au lieu
 des prompts codés en dur.
 
 Author: Datasulting
-Version: 2.0.0
+Version: 2.0.0 - CORRIGÉ avec support du contexte
 """
 
 import logging
@@ -156,7 +156,7 @@ class LLMFactory:
         provider: Optional[str] = None,
         model: Optional[str] = None,
         temperature: Optional[float] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> str:
         """
         Génère une requête SQL à partir d'une demande en langage naturel.
@@ -169,7 +169,7 @@ class LLMFactory:
             provider: Fournisseur LLM à utiliser
             model: Modèle spécifique
             temperature: Température pour la génération
-            context: Contexte additionnel (période, département, etc.)
+            context: Contexte additionnel (période, département, etc.)  # NOUVEAU
             
         Returns:
             Requête SQL générée
@@ -183,7 +183,7 @@ class LLMFactory:
                         user_query=user_query,
                         schema=schema,
                         similar_queries=similar_queries or [],
-                        context=context or {}
+                        context=context or {}  # NOUVEAU PARAMÈTRE UTILISÉ
                     )
                 except Exception as e:
                     logger.warning(f"Erreur PromptManager, utilisation prompts par défaut: {e}")
@@ -232,7 +232,7 @@ class LLMFactory:
         schema: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> tuple[bool, str]:
         """
         Valide qu'une requête SQL correspond sémantiquement à la demande originale.
@@ -244,7 +244,7 @@ class LLMFactory:
             schema: Schéma de la base de données
             provider: Fournisseur LLM pour la validation
             model: Modèle spécifique pour la validation
-            context: Contexte de validation (mode strict, etc.)
+            context: Contexte de validation (mode strict, etc.)  # NOUVEAU
             
         Returns:
             Tuple (is_valid, message)
@@ -257,7 +257,7 @@ class LLMFactory:
                         sql_query=sql_query,
                         original_request=original_request,
                         schema=schema,
-                        context=context or {}
+                        context=context or {}  # NOUVEAU PARAMÈTRE UTILISÉ
                     )
                 except Exception as e:
                     logger.warning(f"Erreur PromptManager validation, utilisation prompt par défaut: {e}")
@@ -309,7 +309,7 @@ class LLMFactory:
         original_request: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> str:
         """
         Génère une explication en langage naturel d'une requête SQL.
@@ -320,7 +320,7 @@ class LLMFactory:
             original_request: Demande originale
             provider: Fournisseur LLM pour l'explication
             model: Modèle spécifique
-            context: Contexte (public cible, niveau de détail, etc.)
+            context: Contexte (public cible, niveau de détail, etc.)  # NOUVEAU
             
         Returns:
             Explication en langage naturel
@@ -332,7 +332,7 @@ class LLMFactory:
                     prompt_content = self.prompt_manager.get_explanation_prompt(
                         sql_query=sql_query,
                         original_request=original_request,
-                        context=context or {}
+                        context=context or {}  # NOUVEAU PARAMÈTRE UTILISÉ
                     )
                 except Exception as e:
                     logger.warning(f"Erreur PromptManager explication, utilisation prompt par défaut: {e}")
@@ -493,7 +493,7 @@ TÂCHE:
 1. Vérifie si la demande concerne une requête SQL sur cette base de données
 2. Si oui, analyse si la requête SQL est compatible avec le schéma
 3. Évalue si la requête répond à l'intention de l'utilisateur
-4. RÉPONDS UNIQUEMENT par "OUI" ou "NON" ou "HORS SUJET"
+4. RÉPONDS UNIQUEMENT par "OUI" ou "NON" ou "HORS_SUJET"
 """
     
     def _build_fallback_explanation_prompt(

@@ -5,7 +5,7 @@ Ce service centralise toutes les validations (syntaxe, sécurité, framework, s�
 en remplaçant les validateurs dispersés dans le code.
 
 Author: Datasulting
-Version: 2.0.0
+Version: 2.0.0 - CORRIGÉ avec support du contexte
 """
 
 import logging
@@ -432,7 +432,7 @@ class ValidationService:
         schema: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> Tuple[bool, str]:
         """
         Validation sémantique via LLM avec prompts Jinja2.
@@ -443,7 +443,7 @@ class ValidationService:
             schema: Schéma de la base de données
             provider: Fournisseur LLM
             model: Modèle LLM
-            context: Contexte de validation (mode strict, etc.)
+            context: Contexte de validation (mode strict, etc.)  # NOUVEAU
             
         Returns:
             Tuple (is_valid, message)
@@ -466,7 +466,7 @@ class ValidationService:
                 schema=schema,
                 provider=provider,
                 model=model,
-                context=validation_context  # Contexte enrichi pour Jinja2
+                context=validation_context  # NOUVEAU PARAMÈTRE PASSÉ
             )
         except Exception as e:
             logger.error(f"Erreur lors de la validation sémantique: {e}")

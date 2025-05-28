@@ -242,3 +242,47 @@ RECOMMANDATIONS:
 
 **Rapport de validation :**
 {% endmacro %}
+
+{# --- PROMPT DE CORRECTION AUTOMATIQUE SPÉCIALISÉ --- #}
+{% macro framework_auto_fix_prompt(sql_query, missing_elements=[]) %}
+Tu es un expert SQL spécialisé dans la correction automatique du framework de sécurité obligatoire.
+
+**Requête à corriger :**
+```sql
+{{ sql_query }}
+```
+
+**Éléments manquants détectés :**
+{% for element in missing_elements %}
+- {{ element }}
+{% endfor %}
+
+**FRAMEWORK OBLIGATOIRE À APPLIQUER :**
+
+1. **Filtre ID_USER :** 
+   - Format : WHERE [alias_depot].ID_USER = ?
+   - Doit être ajouté au début de la clause WHERE existante ou créer une nouvelle clause
+
+2. **Table DEPOT :**
+   - Doit être présente avec un alias (recommandé: 'a')
+   - Si absente, créer un JOIN avec la table principale
+
+3. **Hashtags :**
+   - Minimum : #DEPOT_[alias]#
+   - Ajouter selon les tables utilisées : #FACTS_[alias]#, #PERIODE#, etc.
+
+**CONVENTIONS D'ALIASING :**
+- DEPOT → a
+- FACTS → b  
+- FACTS_REM → fr
+- FACTS_ABS_FINAL → fa
+
+**INSTRUCTIONS :**
+1. Identifie les alias existants
+2. Ajoute les éléments manquants en respectant la syntaxe SQL
+3. Conserve toute la logique métier existante
+4. Place les hashtags à la fin de la requête
+5. Retourne UNIQUEMENT le SQL corrigé
+
+**SQL corrigé avec framework complet :**
+{% endmacro %}

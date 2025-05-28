@@ -1,6 +1,6 @@
 {# ========================================== #}
 {# PROMPTS DE GÉNÉRATION SQL - NL2SQL API   #}
-{# Version: 2.0.0                           #}
+{# Version: 2.0.0 - CORRIGÉ                 #}
 {# ========================================== #}
 
 {# --- PROMPT SYSTÈME POUR GÉNÉRATION SQL --- #}
@@ -15,33 +15,52 @@ RÈGLES ABSOLUES À RESPECTER :
 5. Seules les requêtes SELECT sont autorisées (pas d'INSERT, UPDATE, DELETE)
 
 Tu fais tout ton possible pour comprendre l'intention de l'utilisateur, même si la demande est vague.
+Tu dois ANALYSER ATTENTIVEMENT la documentation fournie et ADAPTER des requêtes existantes similaires plutôt que de construire à partir de zéro.
 {% endmacro %}
 
 {# --- PROMPT PRINCIPAL DE GÉNÉRATION --- #}
 {% macro generate_sql_prompt(user_query, schema, similar_queries=[], context={}) %}
-Traduis cette question en SQL en respectant rigoureusement le schéma fourni :
+Tu es un expert SQL spécialisé dans la traduction de questions RH en langage naturel vers SQL, optimisé pour une base de données de gestion sociale. Tu dois ANALYSER ATTENTIVEMENT la documentation de la base de données fournie et ADAPTER des requêtes existantes similaires.
 
-**Question :** {{ user_query }}
+# MÉTHODE DE TRAVAIL PRIORITAIRE
+1. EXAMINE D'ABORD la documentation de la base de données fournie - c'est une ressource exhaustive qui contient le schéma, les bonnes pratiques, et les modèles de requêtes recommandés
+2. CONSULTE ENSUITE les requêtes similaires fournies et priorise celles avec le meilleur score de correspondance
+3. ADAPTE la requête la plus pertinente en la modifiant pour répondre à la question, en t'appuyant sur la documentation
+4. NE CONSTRUIS PAS de nouvelles requêtes à partir de zéro quand une adaptation est possible
 
-**Schéma de la base de données :**
-```sql
+# CONSIGNES STRICTES
+- RESPECTE TOUJOURS le framework de sécurité obligatoire décrit dans la documentation (filtre ID_USER, table DEPOT, hashtags)
+- UTILISE les conventions d'aliasing recommandées dans la documentation (DEPOT → a, FACTS → b, etc.)
+- RÉFÈRE-TOI aux modèles de requêtes et filtres décrits dans la documentation pour les cas d'usage courants
+- COPIE la structure, les jointures et l'organisation des requêtes similaires appropriées
+- VÉRIFIE que les colonnes utilisées existent bien dans le schéma fourni
+- CONSERVE la même structure de filtrage et de regroupement que les exemples similaires
+- RESPECTE LE FRAMEWORK DE JOINTURE OBLIGATOIRE avec la table DEPOT
+- N'INVENTE PAS de nouvelles jointures ou tables non présentes dans le schéma ou les exemples
+
+# DOCUMENTATION COMPLÈTE DE LA BASE DE DONNÉES
+```
 {{ schema }}
 ```
 
-**FRAMEWORK DE SÉCURITÉ OBLIGATOIRE :**
-1. **Filtre utilisateur :** WHERE [alias_depot].ID_USER = ?
-2. **Table DEPOT :** Toujours présente (JOIN si nécessaire)
-3. **Hashtags :** #DEPOT_[alias]# minimum + tables utilisées
-
 {% if similar_queries %}
-**Exemples de requêtes similaires pour t'inspirer :**
-{% for query in similar_queries[:3] %}
----
-**Exemple {{ loop.index }} (Similarité: {{ "%.2f"|format(query.score) }}) :**
-- Question : "{{ query.metadata.texte_complet }}"
-- SQL : {{ query.metadata.requete }}
+# REQUÊTES SIMILAIRES (PRIORITÉ PAR SCORE)
+{% for query in similar_queries|sort(attribute='score', reverse=true)|list %}
+{% if loop.index <= 3 %}
+{% set emphasis = "⭐⭐⭐" if query.score > 0.85 else "⭐⭐" if query.score > 0.75 else "⭐" %}
+
+EXEMPLE {{ loop.index }} [{{ emphasis }} Score: {{ "%.2f"|format(query.score) }}]
+Question: "{{ query.metadata.get('nom', query.metadata.get('texte_complet', '')) }}"
+SQL: 
+```sql
+{{ query.metadata.get('requete', 'N/A') }}
+```
+{% endif %}
 {% endfor %}
 {% endif %}
+
+# REQUÊTE À TRADUIRE
+Question: "{{ user_query }}"
 
 {% if context.period_filter %}
 **Contexte temporel :** {{ context.period_filter }}
@@ -51,7 +70,17 @@ Traduis cette question en SQL en respectant rigoureusement le schéma fourni :
 **Contexte département :** {{ context.department_filter }}
 {% endif %}
 
-**SQL à générer :**
+# INSTRUCTIONS FINALES
+1. CONSULTE D'ABORD la documentation pour sélectionner le motif de requête le plus approprié pour cette demande
+2. IDENTIFIE ENSUITE parmi les exemples la requête similaire avec la structure la plus adaptée
+3. ADAPTE cette requête en gardant sa structure, ses jointures et son organisation
+4. MODIFIE uniquement les colonnes, filtres et conditions nécessaires pour répondre à la nouvelle question
+5. VÉRIFIE que tous les éléments du framework de sécurité sont présents (filtre ID_USER, table DEPOT, hashtags)
+6. UTILISE les conventions d'aliasing recommandées dans la documentation
+7. VÉRIFIE la cohérence avec le schéma et les exemples de la documentation
+8. RETOURNE UNIQUEMENT la requête SQL finale sans aucune explication
+
+SQL:
 {% endmacro %}
 
 {# --- PROMPT POUR VÉRIFICATION DE PERTINENCE RH --- #}
@@ -99,7 +128,7 @@ Tu es un expert SQL qui explique des requêtes en langage simple et accessible.
 
 {# --- PROMPT POUR CORRECTION AUTOMATIQUE --- #}
 {% macro auto_fix_prompt(sql_query, issues_found) %}
-Tu es un expert SQL chargé de corriger automatiquement une requête pour qu'elle respecte le framework de sécurité.
+Tu es un expert SQL chargé de corriger automatiquement une requête pour qu'elle respecte le framework de sécurité obligatoire.
 
 **Requête à corriger :**
 ```sql
@@ -111,12 +140,19 @@ Tu es un expert SQL chargé de corriger automatiquement une requête pour qu'ell
 - {{ issue }}
 {% endfor %}
 
+**FRAMEWORK DE SÉCURITÉ OBLIGATOIRE À RESPECTER :**
+1. **Filtre ID_USER obligatoire :** WHERE [alias_depot].ID_USER = ?
+2. **Table DEPOT obligatoire :** Doit être présente (directement ou via JOIN)
+3. **Hashtags obligatoires :** #DEPOT_[alias]# minimum + autres tables utilisées
+4. **Conventions d'aliasing :** DEPOT → a, FACTS → b, etc.
+
 **Instructions de correction :**
 1. Ajoute le filtre WHERE [alias_depot].ID_USER = ? si manquant
 2. Assure-toi que la table DEPOT est présente (via JOIN si nécessaire)
 3. Ajoute les hashtags manquants : #DEPOT_[alias]# minimum
-4. Conserve la logique métier de la requête originale
-5. Retourne UNIQUEMENT le SQL corrigé, sans explications
+4. Utilise les conventions d'aliasing recommandées
+5. Conserve la logique métier de la requête originale
+6. Retourne UNIQUEMENT le SQL corrigé, sans explications
 
 **SQL corrigé :**
 {% endmacro %}

@@ -5,7 +5,7 @@ Ce module remplace complètement l'ancien llm_service.py et utilise
 la nouvelle architecture avec Factory Pattern pour une meilleure maintenabilité.
 
 Author: Datasulting
-Version: 2.0.0
+Version: 2.0.0 - CORRIGÉ avec support du contexte
 """
 
 import logging
@@ -101,7 +101,8 @@ class LLMService:
         similar_queries: Optional[List[Dict]] = None,
         provider: Optional[str] = None,
         model: Optional[str] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> Optional[str]:
         """
         Génère une requête SQL à partir d'une demande en langage naturel.
@@ -113,6 +114,7 @@ class LLMService:
             provider: Fournisseur LLM à utiliser
             model: Modèle spécifique
             temperature: Température pour la génération
+            context: Contexte additionnel (période, département, etc.)  # NOUVEAU
             
         Returns:
             Requête SQL générée ou None en cas d'erreur
@@ -126,7 +128,8 @@ class LLMService:
                 similar_queries=similar_queries,
                 provider=provider,
                 model=model,
-                temperature=temperature
+                temperature=temperature,
+                context=context  # NOUVEAU PARAMÈTRE PASSÉ
             )
         except Exception as e:
             logger.error(f"Erreur lors de la génération SQL: {e}")
@@ -139,7 +142,8 @@ class LLMService:
         original_request: str,
         schema: str,
         provider: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> Tuple[bool, str]:
         """
         Valide qu'une requête SQL correspond sémantiquement à la demande originale.
@@ -150,6 +154,7 @@ class LLMService:
             schema: Schéma de la base de données
             provider: Fournisseur LLM pour la validation
             model: Modèle spécifique
+            context: Contexte de validation (mode strict, etc.)  # NOUVEAU
             
         Returns:
             Tuple (is_valid, message)
@@ -162,7 +167,8 @@ class LLMService:
                 original_request=original_request,
                 schema=schema,
                 provider=provider,
-                model=model
+                model=model,
+                context=context  # NOUVEAU PARAMÈTRE PASSÉ
             )
         except Exception as e:
             logger.error(f"Erreur lors de la validation sémantique: {e}")
@@ -174,7 +180,8 @@ class LLMService:
         sql_query: str,
         original_request: str,
         provider: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
     ) -> str:
         """
         Génère une explication en langage naturel d'une requête SQL.
@@ -184,6 +191,7 @@ class LLMService:
             original_request: Demande originale
             provider: Fournisseur LLM pour l'explication
             model: Modèle spécifique
+            context: Contexte (public cible, niveau de détail, etc.)  # NOUVEAU
             
         Returns:
             Explication en langage naturel
@@ -195,7 +203,8 @@ class LLMService:
                 sql_query=sql_query,
                 original_request=original_request,
                 provider=provider,
-                model=model
+                model=model,
+                context=context  # NOUVEAU PARAMÈTRE PASSÉ
             )
         except Exception as e:
             logger.error(f"Erreur lors de l'explication SQL: {e}")
@@ -310,7 +319,8 @@ async def generate_sql(
     similar_queries: Optional[List[Dict]] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
-    temperature: Optional[float] = None
+    temperature: Optional[float] = None,
+    context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
 ) -> Optional[str]:
     """
     Fonction de compatibilité pour generate_sql.
@@ -324,7 +334,8 @@ async def generate_sql(
         similar_queries=similar_queries,
         provider=provider,
         model=model,
-        temperature=temperature
+        temperature=temperature,
+        context=context  # NOUVEAU PARAMÈTRE PASSÉ
     )
 
 
@@ -333,7 +344,8 @@ async def validate_sql_query(
     original_request: str,
     schema: str,
     provider: Optional[str] = None,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
 ) -> Tuple[bool, str]:
     """
     Fonction de compatibilité pour validate_sql_query.
@@ -346,7 +358,8 @@ async def validate_sql_query(
         original_request=original_request,
         schema=schema,
         provider=provider,
-        model=model
+        model=model,
+        context=context  # NOUVEAU PARAMÈTRE PASSÉ
     )
 
 
@@ -354,7 +367,8 @@ async def get_sql_explanation(
     sql_query: str,
     original_request: str,
     provider: Optional[str] = None,
-    model: Optional[str] = None
+    model: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None  # NOUVEAU PARAMÈTRE AJOUTÉ
 ) -> str:
     """
     Fonction de compatibilité pour get_sql_explanation.
@@ -366,7 +380,8 @@ async def get_sql_explanation(
         sql_query=sql_query,
         original_request=original_request,
         provider=provider,
-        model=model
+        model=model,
+        context=context  # NOUVEAU PARAMÈTRE PASSÉ
     )
 
 

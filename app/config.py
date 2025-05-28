@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     PINECONE_ENVIRONMENT: str = Field("gcp-starter", env="PINECONE_ENVIRONMENT")
     
     # Paramètres du modèle d'embedding
-    EMBEDDING_MODEL: str = Field("all-mpnet-base-v2", env="EMBEDDING_MODEL")
+    EMBEDDING_MODEL: str = Field("text-embedding-004", env="EMBEDDING_MODEL")  # CHANGÉ
+    EMBEDDING_PROVIDER: str = Field("google", env="EMBEDDING_PROVIDER")  # NOUVEAU
     
     # Paramètres LLM
     DEFAULT_PROVIDER: str = Field("openai", env="DEFAULT_PROVIDER")
@@ -55,6 +56,9 @@ class Settings(BaseSettings):
     # Fonctionnalités avancées
     METRICS_ENABLED: bool = Field(True, env="METRICS_ENABLED")
     
+    # NOUVEAU: Support de compatibilité pour les différents modèles d'embedding
+    EMBEDDING_DIMENSIONS: int = Field(768, env="EMBEDDING_DIMENSIONS")  # text-embedding-004 = 768, all-mpnet-base-v2 = 768
+    
     # Propriétés de compatibilité pour l'ancien code (si nécessaire)
     @property
     def OPENAI_MODEL(self) -> str:
@@ -71,6 +75,16 @@ class Settings(BaseSettings):
     @property
     def PINECONE_INDEX(self) -> str:
         return self.PINECONE_INDEX_NAME
+    
+    def get_embedding_model_info(self) -> dict:
+        """Retourne les informations sur le modèle d'embedding configuré."""
+        return {
+            "model": "text-embedding-004",
+            "provider": "google",
+            "dimensions": 768,
+            "max_tokens": 8192,
+            "api_key_required": "GOOGLE_API_KEY"
+        }
     
     @classmethod
     def parse_env_var(cls, field_name: str, raw_val: str):
