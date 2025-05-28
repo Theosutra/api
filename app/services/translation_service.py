@@ -18,11 +18,18 @@ from app.core.vector_search import find_similar_queries, check_exact_match, stor
 from app.core.llm_service import LLMService
 from app.utils.schema_loader import load_schema
 from app.services.validation_service import ValidationService
-from app.utils.cache_decorator import cache_service_method  # NOUVEAU IMPORT
+from app.utils.cache_decorator import cache_service_method
 from app.core.exceptions import (
     ValidationError, FrameworkError, LLMError, LLMNetworkError, 
     LLMAuthError, LLMQuotaError, EmbeddingError, VectorSearchError, SchemaError
 )
+
+# Import du gestionnaire de prompts avec fallback
+try:
+    from app.prompts.prompt_manager import get_prompt_manager
+    PROMPTS_AVAILABLE = True
+except ImportError:
+    PROMPTS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,7 @@ class TranslationService:
     - Correction automatique
     - Gestion du cache et stockage
     - Formatage des réponses
+    - Support des prompts Jinja2
     """
     
     def __init__(self, config=None):
@@ -52,6 +60,18 @@ class TranslationService:
         """
         self.config = config or get_settings()
         self.validation_service = ValidationService(self.config)
+        
+        # Gestionnaire de prompts Jinja2 avec fallback
+        if PROMPTS_AVAILABLE:
+            try:
+                self.prompt_manager = get_prompt_manager()
+                logger.info("PromptManager initialisé pour TranslationService")
+            except Exception as e:
+                logger.warning(f"Erreur initialisation PromptManager: {e}")
+                self.prompt_manager = None
+        else:
+            self.prompt_manager = None
+            logger.warning("PromptManager non disponible, utilisation des prompts par défaut")
         
         # Opérations interdites dans la requête utilisateur
         self.forbidden_operations = ["insert", "update", "delete", "drop", "truncate", "alter", "create"]
@@ -402,15 +422,23 @@ class TranslationService:
         model: Optional[str],
         result: Dict[str, Any]
     ):
-        """Génère une nouvelle requête SQL."""
+        """Génère une nouvelle requête SQL avec contexte enrichi."""
         try:
-            # Génération SQL via LLM
+            # Contexte enrichi pour la génération SQL
+            context = {
+                "period_filter": self._extract_period_from_query(user_query),
+                "department_filter": self._extract_department_from_query(user_query),
+                "strict_mode": True
+            }
+            
+            # Génération SQL via LLM avec contexte
             sql_result = await LLMService.generate_sql(
                 user_query=user_query,
                 schema=schema,
                 similar_queries=similar_queries,
                 provider=provider,
-                model=model
+                model=model,
+                context=context  # Nouveau paramètre pour Jinja2
             )
             
             # Vérifier les cas spéciaux
@@ -447,6 +475,34 @@ class TranslationService:
             logger.error(f"Erreur LLM générique: {e}")
             result["status"] = "error"
             result["validation_message"] = f"Erreur du service LLM: {e.message}"
+    
+    def _extract_period_from_query(self, user_query: str) -> Optional[str]:
+        """Extrait des informations de période de la requête utilisateur."""
+        import re
+        
+        # Recherche d'années
+        years = re.findall(r'\b(20\d{2})\b', user_query)
+        if years:
+            return f"Année: {years[0]}"
+        
+        # Recherche de mois
+        months = re.findall(r'\b(janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b', user_query.lower())
+        if months:
+            return f"Mois: {months[0]}"
+        
+        return None
+    
+    def _extract_department_from_query(self, user_query: str) -> Optional[str]:
+        """Extrait des informations de département de la requête utilisateur."""
+        import re
+        
+        # Recherche de départements communs
+        departments = ['IT', 'RH', 'Finance', 'Marketing', 'Commercial', 'Production', 'Logistique']
+        for dept in departments:
+            if dept.lower() in user_query.lower():
+                return dept
+        
+        return None
     
     async def _perform_complete_validation(
         self,
@@ -495,13 +551,20 @@ class TranslationService:
         model: Optional[str],
         result: Dict[str, Any]
     ):
-        """Génère une explication de la requête SQL."""
+        """Génère une explication de la requête SQL avec contexte personnalisé."""
         try:
+            # Contexte personnalisé pour l'explication
+            context = {
+                "target_audience": "non-technique",  # Adaptable selon l'utilisateur
+                "detail_level": "simple"
+            }
+            
             explanation = await LLMService.explain_sql(
                 sql_query, 
                 user_query,
                 provider=provider,
-                model=model
+                model=model,
+                context=context  # Nouveau paramètre pour Jinja2
             )
             result["explanation"] = explanation
         
@@ -591,6 +654,20 @@ class TranslationService:
         
         # Service de validation
         services_status["validation"] = {"status": "ok", "service": "ValidationService"}
+        
+        # Service de prompts Jinja2
+        if self.prompt_manager:
+            try:
+                templates = self.prompt_manager.list_available_templates()
+                services_status["prompts"] = {
+                    "status": "ok",
+                    "templates": templates,
+                    "template_count": len(templates)
+                }
+            except Exception as e:
+                services_status["prompts"] = {"status": "error", "error": str(e)}
+        else:
+            services_status["prompts"] = {"status": "fallback", "message": "Utilisation des prompts par défaut"}
         
         # Déterminer le statut global
         critical_services = ["embedding", "pinecone", "llm"]

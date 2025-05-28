@@ -1,0 +1,244 @@
+{# ========================================== #}
+{# PROMPTS DE VALIDATION SQL - NL2SQL API   #}
+{# Version: 2.0.0                           #}
+{# ========================================== #}
+
+{# --- PROMPT DE VALIDATION SÉMANTIQUE COMPLÈTE --- #}
+{% macro semantic_validation_prompt(sql_query, original_request, schema, context={}) %}
+Tu es un expert SQL chargé d'analyser et de valider des requêtes SQL générées automatiquement.
+
+**Demande originale :** "{{ original_request }}"
+
+**Requête SQL générée :**
+```sql
+{{ sql_query }}
+```
+
+**Schéma de la base de données :**
+```sql
+{{ schema }}
+```
+
+**MISSION :**
+1. **Pertinence :** La demande concerne-t-elle une requête SQL sur cette base RH ?
+2. **Compatibilité :** La requête SQL est-elle compatible avec le schéma fourni ?
+3. **Intention :** La requête répond-elle à l'intention de l'utilisateur ?
+4. **Logique :** La logique SQL est-elle cohérente et optimisée ?
+
+{% if context.strict_mode %}
+**Mode strict activé :** Validation renforcée des jointures et filtres.
+{% endif %}
+
+**RÉPONSE ATTENDUE :** Réponds UNIQUEMENT par :
+- "OUI" si tout est correct
+- "NON" si la requête ne correspond pas
+- "HORS_SUJET" si la demande ne concerne pas cette base de données
+
+**Validation :**
+{% endmacro %}
+
+{# --- PROMPT DE VALIDATION DU FRAMEWORK DE SÉCURITÉ --- #}
+{% macro framework_validation_prompt(sql_query, required_elements={}) %}
+Tu es un auditeur de sécurité SQL spécialisé dans la validation du framework obligatoire.
+
+**Requête à auditer :**
+```sql
+{{ sql_query }}
+```
+
+**ÉLÉMENTS OBLIGATOIRES À VÉRIFIER :**
+
+1. **Filtre de sécurité utilisateur :**
+   - OBLIGATOIRE : WHERE [alias].ID_USER = ?
+   - Exemple valide : WHERE a.ID_USER = ? ou WHERE depot.ID_USER = ?
+
+2. **Présence table DEPOT :**
+   - OBLIGATOIRE : Table DEPOT présente (directement ou via JOIN)
+   - Exemple valide : FROM DEPOT a ou JOIN DEPOT d ON ...
+
+3. **Hashtags de traçabilité :**
+   - OBLIGATOIRE : Minimum #DEPOT_[alias]#
+   - Recommandé : + hashtags des autres tables (#FACTS_[alias]#, #PERIODE#)
+
+4. **Type de requête :**
+   - OBLIGATOIRE : Uniquement SELECT (pas d'INSERT/UPDATE/DELETE)
+
+{% if required_elements.additional_checks %}
+**Vérifications supplémentaires :**
+{% for check in required_elements.additional_checks %}
+- {{ check }}
+{% endfor %}
+{% endif %}
+
+**ANALYSE DEMANDÉE :**
+Pour chaque élément, indique :
+- ✅ CONFORME si présent et correct
+- ❌ NON_CONFORME si manquant ou incorrect
+- ⚠️ AMÉLIORABLE si présent mais pourrait être optimisé
+
+**FORMAT DE RÉPONSE :**
+```
+FILTRE_USER: [✅/❌/⚠️] [explication]
+TABLE_DEPOT: [✅/❌/⚠️] [explication]  
+HASHTAGS: [✅/❌/⚠️] [explication]
+TYPE_REQUETE: [✅/❌/⚠️] [explication]
+VERDICT_GLOBAL: [CONFORME/NON_CONFORME/AMÉLIORABLE]
+```
+
+**Audit :**
+{% endmacro %}
+
+{# --- PROMPT DE VALIDATION DE PERFORMANCE --- #}
+{% macro performance_validation_prompt(sql_query, expected_complexity="medium") %}
+Tu es un expert en optimisation SQL qui analyse les performances d'une requête.
+
+**Requête à analyser :**
+```sql
+{{ sql_query }}
+```
+
+**Complexité attendue :** {{ expected_complexity }}
+
+**CRITÈRES D'ÉVALUATION :**
+
+1. **Jointures :**
+   - Les JOIN sont-ils optimaux ?
+   - Y a-t-il des jointures manquantes ou redondantes ?
+
+2. **Index et filtres :**
+   - Les WHERE sont-ils bien placés ?
+   - Les filtres utilisent-ils les index probables ?
+
+3. **Fonctions et calculs :**
+   - Les fonctions sont-elles optimisées ?
+   - Y a-t-il des calculs redondants ?
+
+4. **Lisibilité :**
+   - La requête est-elle claire et maintenable ?
+   - Les alias sont-ils cohérents ?
+
+**RÉPONSE ATTENDUE :**
+Note sur 10 + commentaires d'amélioration si < 8/10
+
+**Analyse performance :**
+{% endmacro %}
+
+{# --- PROMPT DE VALIDATION MÉTIER RH --- #}
+{% macro business_validation_prompt(sql_query, original_request, domain_rules={}) %}
+Tu es un expert RH qui valide la cohérence métier d'une requête SQL.
+
+**Demande métier :** "{{ original_request }}"
+
+**Requête SQL :**
+```sql
+{{ sql_query }}
+```
+
+**RÈGLES MÉTIER RH À VÉRIFIER :**
+
+1. **Contrats :**
+   - CDI = NATURE_CONTRAT = '01'
+   - CDD = NATURE_CONTRAT = '02'
+   - Temps plein = MODALITE_TEMPS = '10'
+
+2. **Effectifs :**
+   - Effectif inscrit = (FIN_CONTRAT = 'null' OR FIN_CONTRAT > periode.fin)
+   - Effectif présent = TEM_FP = 1
+   - Nouvelle embauche = TEM_EMB = 1
+
+3. **Périodes :**
+   - Format période = MMAAAA
+   - Dernière période = MAX(CONCAT(SUBSTRING(periode, 5, 4), SUBSTRING(periode, 3, 2)))
+
+4. **Calculs RH :**
+   - ETP = Équivalent Temps Plein
+   - Ancienneté en années = val_anc / 365.25
+
+{% if domain_rules.custom_rules %}
+**Règles spécifiques :**
+{% for rule in domain_rules.custom_rules %}
+- {{ rule }}
+{% endfor %}
+{% endif %}
+
+**VALIDATION DEMANDÉE :**
+La requête respecte-t-elle les règles métier RH pour répondre correctement à la demande ?
+
+**Réponse :** [CONFORME/NON_CONFORME] + explication
+
+**Validation métier :**
+{% endmacro %}
+
+{# --- PROMPT DE VALIDATION DE COHÉRENCE TEMPORELLE --- #}
+{% macro temporal_validation_prompt(sql_query, original_request, detected_dates=[]) %}
+Tu es un validateur spécialisé dans la cohérence temporelle des requêtes RH.
+
+**Demande :** "{{ original_request }}"
+
+**Requête SQL :**
+```sql
+{{ sql_query }}
+```
+
+{% if detected_dates %}
+**Dates détectées dans la demande :**
+{% for date in detected_dates %}
+- {{ date.value }} (Type: {{ date.type }})
+{% endfor %}
+{% endif %}
+
+**VÉRIFICATIONS TEMPORELLES :**
+
+1. **Cohérence des années :**
+   - Les années dans la demande correspondent-elles à celles dans le SQL ?
+
+2. **Logique des filtres de dates :**
+   - debut_contrat vs fin_contrat
+   - Périodes de paie (format MMAAAA)
+
+3. **Calculs d'ancienneté :**
+   - Cohérence avec les dates de référence
+
+**ANALYSE :**
+Y a-t-il des incohérences temporelles entre la demande et la requête SQL ?
+
+**Réponse :** [COHÉRENT/INCOHÉRENT] + détails
+
+**Validation temporelle :**
+{% endmacro %}
+
+{# --- PROMPT DE GÉNÉRATION DE RAPPORT DE VALIDATION --- #}
+{% macro validation_report_prompt(sql_query, original_request, all_checks=[]) %}
+Tu es un auditeur SQL qui génère un rapport de validation complet.
+
+**Requête auditée :**
+```sql
+{{ sql_query }}
+```
+
+**Demande originale :** "{{ original_request }}"
+
+**RÉSULTATS DES VÉRIFICATIONS :**
+{% for check in all_checks %}
+- **{{ check.type }}** : {{ check.status }} - {{ check.message }}
+{% endfor %}
+
+**MISSION :**
+Génère un rapport de validation concis mais complet.
+
+**FORMAT SOUHAITÉ :**
+```
+STATUT GLOBAL: [✅ VALIDÉ / ⚠️ AVERTISSEMENTS / ❌ REJETÉ]
+
+DÉTAILS:
+- Sécurité: [statut]
+- Framework: [statut]  
+- Sémantique: [statut]
+- Performance: [statut]
+
+RECOMMANDATIONS:
+[Liste des améliorations suggérées]
+```
+
+**Rapport de validation :**
+{% endmacro %}

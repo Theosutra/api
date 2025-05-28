@@ -15,6 +15,13 @@ from app.config import get_settings
 from app.core.exceptions import ValidationError, FrameworkError
 from app.core.llm_service import LLMService
 
+# Import du gestionnaire de prompts avec fallback
+try:
+    from app.prompts.prompt_manager import get_prompt_manager
+    PROMPTS_AVAILABLE = True
+except ImportError:
+    PROMPTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,6 +40,7 @@ class ValidationService:
     - Validation du framework obligatoire
     - Validation sémantique via LLM
     - Correction automatique
+    - Support des prompts Jinja2
     """
     
     def __init__(self, config=None):
@@ -43,6 +51,17 @@ class ValidationService:
             config: Configuration de l'application (utilise get_settings() si None)
         """
         self.config = config or get_settings()
+        
+        # Gestionnaire de prompts Jinja2 avec fallback
+        if PROMPTS_AVAILABLE:
+            try:
+                self.prompt_manager = get_prompt_manager()
+                logger.debug("PromptManager initialisé pour ValidationService")
+            except Exception as e:
+                logger.warning(f"Erreur initialisation PromptManager: {e}")
+                self.prompt_manager = None
+        else:
+            self.prompt_manager = None
         
         # Patterns de validation réutilisables
         self.forbidden_operations = [
@@ -98,9 +117,6 @@ class ValidationService:
             raise ValidationError("sql_query doit être une chaîne non vide", "sql_query", sql_query)
         
         sql_query = sql_query.strip()
-        
-        if len(sql_query) == 0:
-            return False, "Requête SQL vide"
         
         try:
             # Vérifier les mots-clés SQL de base
@@ -415,10 +431,11 @@ class ValidationService:
         original_request: str, 
         schema: str,
         provider: Optional[str] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None
     ) -> Tuple[bool, str]:
         """
-        Validation sémantique via LLM.
+        Validation sémantique via LLM avec prompts Jinja2.
         
         Args:
             sql_query: Requête SQL à valider
@@ -426,6 +443,7 @@ class ValidationService:
             schema: Schéma de la base de données
             provider: Fournisseur LLM
             model: Modèle LLM
+            context: Contexte de validation (mode strict, etc.)
             
         Returns:
             Tuple (is_valid, message)
@@ -434,12 +452,21 @@ class ValidationService:
             raise ValidationError("sql_query et original_request sont obligatoires")
         
         try:
+            # Enrichir le contexte avec des informations de validation
+            validation_context = context or {}
+            validation_context.update({
+                "strict_mode": True,
+                "business_domain": "HR",
+                "validation_level": "semantic"
+            })
+            
             return await LLMService.validate_sql_semantically(
                 sql_query=sql_query,
                 original_request=original_request,
                 schema=schema,
                 provider=provider,
-                model=model
+                model=model,
+                context=validation_context  # Contexte enrichi pour Jinja2
             )
         except Exception as e:
             logger.error(f"Erreur lors de la validation sémantique: {e}")

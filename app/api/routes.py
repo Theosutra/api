@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 import logging
 import time
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from app.api.models import (
     SQLTranslationRequest, SQLTranslationResponse, HealthCheckResponse,
@@ -54,7 +54,7 @@ def get_validation_service() -> ValidationService:
     "/translate",
     response_model=SQLTranslationResponse,
     summary="Traduire du langage naturel en SQL",
-    description="Traduit une requête en langage naturel en SQL optimisé avec respect du framework obligatoire (filtre ID_USER, hashtags). Service Layer architecture avec validation unifiée.",
+    description="Traduit une requête en langage naturel en SQL optimisé avec respect du framework obligatoire (filtre ID_USER, hashtags). Service Layer architecture avec validation unifiée et prompts Jinja2.",
     response_description="La requête SQL générée et les métadonnées associées, avec validation du framework"
 )
 async def translate_to_sql(
@@ -64,7 +64,7 @@ async def translate_to_sql(
 ):
     """
     Endpoint principal pour traduire une requête en langage naturel en SQL.
-    Version simplifiée utilisant le Service Layer pattern.
+    Version simplifiée utilisant le Service Layer pattern avec prompts Jinja2.
     
     Args:
         request: La requête contenant le texte en langage naturel et les paramètres
@@ -408,6 +408,191 @@ async def validate_framework(request: SQLFrameworkValidationRequest):
         )
 
 
+# ==========================================================================
+# NOUVEAUX ENDPOINTS POUR LE SYSTÈME DE PROMPTS JINJA2
+# ==========================================================================
+
+@router.get(
+    "/prompts/templates",
+    summary="Lister les templates de prompts",
+    description="Récupère la liste des templates de prompts Jinja2 disponibles."
+)
+async def get_prompt_templates():
+    """Endpoint pour lister les templates de prompts disponibles."""
+    try:
+        from app.prompts.prompt_manager import get_prompt_manager
+        prompt_manager = get_prompt_manager()
+        
+        templates_info = {}
+        for template_name in prompt_manager.list_available_templates():
+            macros = prompt_manager.list_template_macros(template_name)
+            is_valid = prompt_manager.validate_template_syntax(template_name)
+            
+            templates_info[template_name] = {
+                "macros": macros,
+                "valid": is_valid,
+                "macro_count": len(macros)
+            }
+        
+        return {
+            "status": "ok",
+            "templates": templates_info,
+            "total_templates": len(templates_info),
+            "jinja2_available": True
+        }
+    
+    except ImportError:
+        return {
+            "status": "fallback",
+            "message": "Système de prompts Jinja2 non disponible, utilisation des prompts par défaut",
+            "templates": {},
+            "jinja2_available": False
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des templates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la récupération des templates: {str(e)}"
+        )
+
+
+@router.post(
+    "/prompts/render-test",
+    summary="Tester le rendu d'un prompt",
+    description="Teste le rendu d'une macro de prompt avec des paramètres donnés."
+)
+async def test_prompt_rendering(
+    template_name: str,
+    macro_name: str,
+    test_params: Dict[str, Any] = {}
+):
+    """Endpoint pour tester le rendu des prompts."""
+    try:
+        from app.prompts.prompt_manager import get_prompt_manager
+        prompt_manager = get_prompt_manager()
+        
+        # Vérifier que le template existe
+        if template_name not in prompt_manager.list_available_templates():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Template '{template_name}' introuvable"
+            )
+        
+        # Tenter le rendu avec des paramètres de test
+        try:
+            rendered = prompt_manager.render_macro(template_name, macro_name, **test_params)
+            
+            return {
+                "status": "success",
+                "template_name": template_name,
+                "macro_name": macro_name,
+                "test_params": test_params,
+                "rendered_prompt": rendered,
+                "length": len(rendered)
+            }
+        
+        except ValueError as e:
+            # Macro introuvable
+            available_macros = prompt_manager.list_template_macros(template_name)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": str(e),
+                    "available_macros": available_macros
+                }
+            )
+    
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Système de prompts Jinja2 non disponible"
+        )
+    
+    except HTTPException:
+        raise
+    
+    except Exception as e:
+        logger.error(f"Erreur lors du test de rendu: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors du test de rendu: {str(e)}"
+        )
+
+
+@router.get(
+    "/prompts/health",
+    summary="État de santé du système de prompts",
+    description="Vérifie l'état de santé du système de prompts Jinja2."
+)
+async def get_prompts_health():
+    """Endpoint pour vérifier l'état de santé du système de prompts."""
+    try:
+        from app.prompts.prompt_manager import get_prompt_manager
+        prompt_manager = get_prompt_manager()
+        
+        # Récupérer les informations
+        templates = prompt_manager.list_available_templates()
+        
+        # Valider chaque template
+        template_status = {}
+        for template_name in templates:
+            is_valid = prompt_manager.validate_template_syntax(template_name)
+            macros = prompt_manager.list_template_macros(template_name)
+            
+            template_status[template_name] = {
+                "valid": is_valid,
+                "macros": macros,
+                "macro_count": len(macros)
+            }
+        
+        # Déterminer le statut global
+        all_valid = all(info["valid"] for info in template_status.values())
+        global_status = "ok" if all_valid else "warning"
+        
+        return {
+            "status": global_status,
+            "system": "jinja2",
+            "templates": template_status,
+            "summary": {
+                "total_templates": len(templates),
+                "valid_templates": sum(1 for info in template_status.values() if info["valid"]),
+                "total_macros": sum(info["macro_count"] for info in template_status.values())
+            }
+        }
+    
+    except ImportError:
+        return {
+            "status": "fallback",
+            "system": "default",
+            "message": "Système de prompts Jinja2 non disponible, utilisation des prompts par défaut",
+            "templates": {},
+            "summary": {
+                "total_templates": 0,
+                "valid_templates": 0,
+                "total_macros": 0
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Erreur lors de la vérification de santé des prompts: {e}")
+        return {
+            "status": "error",
+            "system": "jinja2",
+            "error": str(e),
+            "templates": {},
+            "summary": {
+                "total_templates": 0,
+                "valid_templates": 0,
+                "total_macros": 0
+            }
+        }
+
+
+# ==========================================================================
+# AUTRES ENDPOINTS UTILITAIRES
+# ==========================================================================
+
 @router.get(
     "/cache/stats",
     summary="Statistiques du cache",
@@ -547,6 +732,10 @@ async def get_detailed_service_status():
                     "default_provider": translation_service.config.DEFAULT_PROVIDER,
                     "cache_enabled": translation_service.config.CACHE_ENABLED,
                     "debug": translation_service.config.DEBUG
+                },
+                "prompt_manager": {
+                    "available": translation_service.prompt_manager is not None,
+                    "class": translation_service.prompt_manager.__class__.__name__ if translation_service.prompt_manager else None
                 }
             },
             "validation_service": {
@@ -555,9 +744,35 @@ async def get_detailed_service_status():
                     "forbidden_operations": len(validation_service.forbidden_operations),
                     "framework_patterns": len(validation_service.framework_patterns),
                     "injection_patterns": len(validation_service.injection_patterns)
+                },
+                "prompt_manager": {
+                    "available": validation_service.prompt_manager is not None,
+                    "class": validation_service.prompt_manager.__class__.__name__ if validation_service.prompt_manager else None
                 }
             }
         }
+        
+        # Ajouter les informations sur le système de prompts
+        try:
+            from app.prompts.prompt_manager import get_prompt_manager
+            prompt_manager = get_prompt_manager()
+            templates = prompt_manager.list_available_templates()
+            
+            debug_info["prompt_system"] = {
+                "status": "jinja2",
+                "templates": templates,
+                "template_count": len(templates)
+            }
+        except ImportError:
+            debug_info["prompt_system"] = {
+                "status": "fallback",
+                "message": "Prompts par défaut utilisés"
+            }
+        except Exception as e:
+            debug_info["prompt_system"] = {
+                "status": "error",
+                "error": str(e)
+            }
         
         return {
             "health": health_status,
@@ -571,5 +786,3 @@ async def get_detailed_service_status():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors de la récupération du statut: {str(e)}"
         )
-
-

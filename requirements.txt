@@ -8,6 +8,8 @@ starlette>=0.27.0
 aiofiles>=23.1.0
 sqlglot>=11.5.0
 redis>=4.5.5
+Jinja2>=3.1.0
+
 
 # Pour l'authentification et la sécurité
 python-multipart>=0.0.6

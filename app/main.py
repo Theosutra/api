@@ -78,6 +78,18 @@ async def lifespan(app: FastAPI):
         logger.info(f"  - Mode debug: {settings.DEBUG}")
         logger.info(f"  - Schéma: {settings.SCHEMA_PATH}")
         
+        # Vérifier le système de prompts Jinja2
+        try:
+            from app.prompts.prompt_manager import get_prompt_manager
+            prompt_manager = get_prompt_manager()
+            templates = prompt_manager.list_available_templates()
+            logger.info(f"  - Templates prompts: {templates}")
+            logger.info("✅ Système de prompts Jinja2 initialisé")
+        except ImportError:
+            logger.warning("⚠️ Système de prompts Jinja2 non disponible, utilisation des prompts par défaut")
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur système de prompts: {e}")
+        
         # 5. Afficher les providers LLM configurés
         try:
             from app.core.llm_service import LLMService
@@ -159,6 +171,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"⚠️ Erreur lors du nettoyage cache: {e}")
         
+        # 4. Nettoyer le système de prompts si disponible
+        try:
+            from app.prompts.prompt_manager import get_prompt_manager
+            prompt_manager = get_prompt_manager()
+            prompt_manager.clear_cache()
+            logger.info("✅ Cache des prompts nettoyé")
+        except ImportError:
+            pass  # Système de prompts non disponible
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur lors du nettoyage des prompts: {e}")
+        
         logger.info("✅ Arrêt propre de l'application - Service Layer")
         
     except Exception as e:
@@ -172,7 +195,7 @@ app = FastAPI(
     API pour traduire des requêtes en langage naturel en SQL.
     Utilise une combinaison de recherche vectorielle et de génération via LLM pour produire des requêtes SQL optimisées.
     
-    Version 2.0.0 - Architecture Service Layer avec validation unifiée.
+    Version 2.0.0 - Architecture Service Layer avec validation unifiée et prompts Jinja2.
     """,
     version="2.0.0",
     docs_url="/docs",
@@ -230,6 +253,8 @@ async def log_requests(request: Request, call_next):
             service_info = " [ValidationService]"
         elif "/health" in url:
             service_info = " [HealthService]"
+        elif "/prompts" in url:
+            service_info = " [PromptService]"
         
         logger.log(
             log_level,
@@ -269,7 +294,7 @@ async def log_requests(request: Request, call_next):
 async def root():
     """
     Endpoint racine qui renvoie des informations de base sur l'API.
-    Version Service Layer avec statistiques enrichies.
+    Version Service Layer avec statistiques enrichies et système de prompts.
     
     Returns:
         Informations de base sur l'API avec statistiques des services
@@ -281,6 +306,22 @@ async def root():
         configured_providers = LLMService.get_configured_providers()
         available_models = await LLMService.get_available_models()
         
+        # Vérifier le système de prompts
+        prompts_info = {"status": "not_available", "templates": []}
+        try:
+            from app.prompts.prompt_manager import get_prompt_manager
+            prompt_manager = get_prompt_manager()
+            templates = prompt_manager.list_available_templates()
+            prompts_info = {
+                "status": "available",
+                "templates": templates,
+                "template_count": len(templates)
+            }
+        except ImportError:
+            prompts_info["status"] = "fallback"
+        except Exception as e:
+            prompts_info = {"status": "error", "error": str(e)}
+        
         # Statistiques des services
         service_stats = {
             "configured_providers": configured_providers,
@@ -291,11 +332,12 @@ async def root():
                 "validation_service": validation_service is not None,
                 "llm_service": True,
                 "cache_enabled": settings.CACHE_ENABLED
-            }
+            },
+            "prompts_system": prompts_info
         }
         
         return {
-            "message": "🚀 Bienvenue sur l'API NL2SQL v2.0.0 - Service Layer!",
+            "message": "🚀 Bienvenue sur l'API NL2SQL v2.0.0 - Service Layer avec Prompts Jinja2!",
             "description": "API intelligente de traduction langage naturel vers SQL",
             "version": "2.0.0",
             "architecture": "Service Layer Pattern",
@@ -311,14 +353,16 @@ async def root():
                 "✅ Validation unifiée centralisée",
                 "🔄 Retry automatique avec backoff",
                 "🏗️ Architecture Service Layer",
-                "📊 Health checks avancés"
+                "📊 Health checks avancés",
+                "🎯 Prompts modulaires Jinja2"
             ],
             "endpoints": {
                 "translate": f"{settings.API_PREFIX}/translate",
                 "validate": f"{settings.API_PREFIX}/validate-framework",
                 "models": f"{settings.API_PREFIX}/models",
                 "schemas": f"{settings.API_PREFIX}/schemas",
-                "cache_stats": f"{settings.API_PREFIX}/cache/stats"
+                "cache_stats": f"{settings.API_PREFIX}/cache/stats",
+                "prompts": f"{settings.API_PREFIX}/prompts/templates"
             }
         }
     
@@ -376,6 +420,21 @@ async def get_metrics():
             metrics["services"]["cache"] = cache_stats
         except Exception as e:
             metrics["services"]["cache"] = {"status": "error", "message": str(e)}
+        
+        # Ajouter les métriques du système de prompts
+        try:
+            from app.prompts.prompt_manager import get_prompt_manager
+            prompt_manager = get_prompt_manager()
+            templates = prompt_manager.list_available_templates()
+            metrics["services"]["prompts"] = {
+                "status": "ok",
+                "templates": templates,
+                "template_count": len(templates)
+            }
+        except ImportError:
+            metrics["services"]["prompts"] = {"status": "fallback", "message": "Prompts par défaut"}
+        except Exception as e:
+            metrics["services"]["prompts"] = {"status": "error", "message": str(e)}
         
         # Ajouter les métriques du service de traduction si disponible
         if translation_service:
@@ -440,6 +499,15 @@ async def get_service_info():
                         "Validation sémantique",
                         "Explication des requêtes"
                     ]
+                },
+                "prompt_system": {
+                    "description": "Système de prompts modulaires Jinja2",
+                    "responsibilities": [
+                        "Gestion centralisée des prompts",
+                        "Templates modulaires et réutilisables",
+                        "Contexte dynamique pour les prompts",
+                        "Fallback vers prompts par défaut"
+                    ]
                 }
             },
             "benefits": [
@@ -447,7 +515,8 @@ async def get_service_info():
                 "Code plus maintenable et testable",
                 "Réutilisabilité des services",
                 "Gestion centralisée des erreurs",
-                "Évolutivité simplifiée"
+                "Évolutivité simplifiée",
+                "Prompts modulaires et configurables"
             ],
             "config": {
                 "default_provider": settings.DEFAULT_PROVIDER,
@@ -480,6 +549,7 @@ if __name__ == "__main__":
     logger.info(f"🔧 Debug: {settings.DEBUG}")
     logger.info(f"📝 Log level: {log_level}")
     logger.info(f"🏗️ Architecture: Service Layer Pattern")
+    logger.info(f"🎯 Prompts: Jinja2 + Fallback")
     
     try:
         uvicorn.run(
