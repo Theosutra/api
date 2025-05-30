@@ -159,51 +159,69 @@ def _find_similar_queries_sync(query_vector: List[float], top_k: int) -> List[Di
         if not isinstance(matches, list):
             raise VectorSearchError("Format de réponse Pinecone invalide: 'matches' n'est pas une liste", settings.PINECONE_INDEX_NAME)
         
-        # Filtrer les résultats avec scores valides ET normaliser les métadonnées
+        # ✅ FIX PRINCIPAL: Gérer les objets ScoredVector ET les dictionnaires
         valid_matches = []
         for match in matches:
-            # DEBUG: Afficher la structure complète pour diagnostic
-            logger.debug(f"Structure du match reçu: {match}")
+            logger.debug(f"🔍 Processing match type: {type(match)}")
             
-            if isinstance(match, dict):
-                # Essayer d'extraire le score de différentes façons
-                score = None
-                if 'score' in match:
-                    score = match['score']
-                elif hasattr(match, 'score'):
-                    score = match.score
+            # Extraire les données selon le type de l'objet retourné par Pinecone
+            try:
+                if hasattr(match, 'score'):
+                    # ✅ Objet ScoredVector de Pinecone (nouveau format)
+                    score = float(match.score)
+                    metadata = dict(match.metadata) if hasattr(match, 'metadata') and match.metadata else {}
+                    match_id = str(match.id) if hasattr(match, 'id') else ''
+                    logger.debug(f"✅ ScoredVector: score={score:.3f}, id={match_id}")
+                elif isinstance(match, dict):
+                    # ✅ Dictionnaire classique (ancien format)
+                    score = match.get('score')
+                    metadata = match.get('metadata', {})
+                    match_id = match.get('id', '')
+                    logger.debug(f"✅ Dict: score={score:.3f}, id={match_id}")
                 else:
-                    # Certaines versions de Pinecone utilisent des attributs différents
-                    logger.warning(f"Pas de score trouvé dans match: {list(match.keys())}")
+                    logger.warning(f"❌ Type de match non reconnu: {type(match)}")
                     continue
                 
                 # Validation du score
-                if score is not None and isinstance(score, (int, float)) and not (isinstance(score, float) and (score != score or score == float('inf') or score == float('-inf'))):
-                    # ✅ NORMALISER LES MÉTADONNÉES POUR COMPATIBILITÉ
-                    metadata = match.get('metadata', {})
-                    if not metadata and hasattr(match, 'metadata'):
-                        metadata = match.metadata
+                if score is not None and isinstance(score, (int, float)):
+                    # Vérifier que le score est valide (pas NaN ou infini)
+                    if isinstance(score, float) and (score != score or score == float('inf') or score == float('-inf')):
+                        logger.warning(f"❌ Score invalide ignoré: {score}")
+                        continue
                     
+                    # ✅ NORMALISER LES MÉTADONNÉES POUR COMPATIBILITÉ
                     normalized_metadata = _normalize_metadata(metadata)
                     
                     # Vérifier que la requête SQL n'est pas vide après normalisation
-                    if normalized_metadata.get('requete', '').strip():
+                    sql_query = normalized_metadata.get('requete', '').strip()
+                    if sql_query:
                         # Reconstruire le match avec la structure attendue
                         normalized_match = {
                             'score': score,
                             'metadata': normalized_metadata,
-                            'id': match.get('id', '') or getattr(match, 'id', '')
+                            'id': match_id
                         }
                         valid_matches.append(normalized_match)
-                        logger.debug(f"Match valide: score={score:.3f}, texte='{normalized_metadata.get('texte_complet', '')[:50]}...'")
+                        
+                        # Log de succès avec détails
+                        texte_complet = normalized_metadata.get('texte_complet', '')[:50]
+                        logger.debug(f"✅ Match valide: score={score:.3f}, texte='{texte_complet}...', sql_length={len(sql_query)}")
                     else:
-                        logger.warning(f"Match ignoré: requête SQL vide (score={score:.3f})")
+                        logger.warning(f"❌ Match ignoré: requête SQL vide (score={score:.3f})")
                 else:
-                    logger.warning(f"Score invalide ignoré: {score}")
-            else:
-                logger.warning(f"Match invalide ignoré: type={type(match)}, contenu={match}")
+                    logger.warning(f"❌ Score invalide ignoré: {score} (type: {type(score)})")
+            
+            except Exception as e:
+                logger.warning(f"❌ Erreur lors du traitement du match: {e}")
+                continue
         
-        logger.debug(f"Recherche Pinecone: {len(valid_matches)} résultats valides sur {len(matches)} totaux")
+        logger.info(f"🔍 Recherche Pinecone: {len(valid_matches)} résultats valides sur {len(matches)} totaux")
+        
+        # Log détaillé des résultats pour debug
+        for i, match in enumerate(valid_matches[:3]):  # Log des 3 premiers
+            metadata = match['metadata']
+            logger.info(f"  {i+1}. Score: {match['score']:.3f} - '{metadata.get('texte_complet', '')[:60]}...'")
+        
         return valid_matches
     
     except VectorSearchError:
@@ -235,7 +253,7 @@ async def find_similar_queries(query_vector: List[float], top_k: int = 5) -> Lis
     if top_k <= 0 or top_k > 100:
         raise VectorSearchError("top_k doit être entre 1 et 100", settings.PINECONE_INDEX_NAME)
     
-    logger.debug(f"Recherche des {top_k} requêtes les plus similaires dans Pinecone")
+    logger.info(f"🔍 Recherche des {top_k} requêtes les plus similaires dans Pinecone")
     
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -243,7 +261,7 @@ async def find_similar_queries(query_vector: List[float], top_k: int = 5) -> Lis
                 executor, _find_similar_queries_sync, query_vector, top_k
             )
         
-        logger.debug(f"Requêtes similaires trouvées: {len(similar_queries)}")
+        logger.info(f"✅ Requêtes similaires trouvées: {len(similar_queries)}")
         return similar_queries
     
     except VectorSearchError:
@@ -306,13 +324,13 @@ async def check_exact_match(similar_queries: List[Dict[str, Any]], threshold: fl
             # ✅ SUPPORT DES DEUX FORMATS : 'requete' ET 'requetes'
             sql_query = metadata.get('requete') or metadata.get('requetes')
             if sql_query and isinstance(sql_query, str) and len(sql_query.strip()) > 0:
-                logger.info(f"Correspondance exacte trouvée avec un score de {score:.4f}")
+                logger.info(f"✅ Correspondance exacte trouvée avec un score de {score:.4f}")
                 return sql_query.strip()
             else:
-                logger.warning("Requête SQL manquante ou vide dans la correspondance exacte")
+                logger.warning("❌ Requête SQL manquante ou vide dans la correspondance exacte")
                 return None
         
-        logger.debug(f"Pas de correspondance exacte (meilleur score: {score:.4f})")
+        logger.debug(f"❌ Pas de correspondance exacte (meilleur score: {score:.4f} < {threshold})")
         return None
     
     except Exception as e:
@@ -400,7 +418,7 @@ async def store_query(
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             await asyncio.get_event_loop().run_in_executor(executor, _store_sync)
         
-        logger.info(f"Requête stockée avec succès dans Pinecone (ID: {query_id})")
+        logger.info(f"✅ Requête stockée avec succès dans Pinecone (ID: {query_id})")
         return True
     
     except VectorSearchError:

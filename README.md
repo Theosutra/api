@@ -11,7 +11,7 @@
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
-_API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées avec recherche vectorielle sémantique et support multi-LLM_
+_API intelligente qui traduit vos questions en langage naturel en requêtes SQL optimisées avec recherche vectorielle sémantique, support multi-LLM et prompts Jinja2 modulaires_
 
 [🚀 Installation](#-installation) • [💻 Utilisation](#-utilisation) • [🛡️ Sécurité](#%EF%B8%8F-architecture-de-sécurité) • [⚙️ Configuration](#%EF%B8%8F-configuration) • [❓ FAQ](#-faq)
 
@@ -21,32 +21,36 @@ _API intelligente qui traduit vos questions en langage naturel en requêtes SQL 
 
 ## ✨ Fonctionnalités Clés
 
-- 🧠 **Multi-LLM** - Support OpenAI (GPT-4), Anthropic (Claude), Google (Gemini)
+- 🧠 **Multi-LLM** - Support OpenAI (GPT-4o), Anthropic (Claude), Google (Gemini)
 - 🔍 **Recherche Sémantique** - Utilise Pinecone pour trouver des requêtes similaires
 - 🛡️ **Sécurité Renforcée** - Framework obligatoire avec filtres utilisateur automatiques
 - ⚡ **Cache Intelligent** - Redis avec contrôle granulaire par requête
-- 📋 **Validation Avancée** - Vérification de syntaxe, sécurité et conformité
+- 📋 **Validation Avancée** - Service unifié : syntaxe, sécurité, framework et sémantique
 - 📚 **Documentation Interactive** - Swagger UI et ReDoc intégrés
 - 🐳 **Conteneurisé** - Déploiement avec Docker et Docker Compose
 - 🔧 **Configurable** - Variables d'environnement pour tous les paramètres
 - 📊 **Monitoring** - Métriques de performance et logs détaillés
+- 🎯 **Prompts Jinja2** - Templates modulaires et personnalisables avec contexte dynamique
 
 ## 🏗️ Architecture
 
 ```mermaid
 graph TB
-    A[Requête NL] --> B[Vérification Pertinence]
-    B --> C[Vectorisation]
-    C --> D{Cache Hit?}
-    D -->|Oui| E[Retour Cache]
-    D -->|Non| F[Recherche Pinecone]
-    F --> G{Match Exact?}
-    G -->|Oui| H[Validation Framework]
-    G -->|Non| I[Génération LLM]
-    I --> J[Validation Sécurité]
-    H --> K[Réponse]
-    J --> K
-    K --> L[Mise en Cache]
+    A[Requête NL] --> B[Validation Entrée]
+    B --> C[Vérification Pertinence RH]
+    C --> D[Vectorisation Google]
+    D --> E{Cache Hit?}
+    E -->|Oui| F[Retour Cache]
+    E -->|Non| G[Recherche Pinecone]
+    G --> H{Correspondance Exacte?}
+    H -->|Oui| I[Validation Framework]
+    H -->|Non| J[Génération LLM + Prompts Jinja2]
+    J --> K[Validation Complète]
+    K --> L[Correction Auto si Nécessaire]
+    L --> M[Génération Explication]
+    M --> N[Mise en Cache]
+    I --> N
+    N --> O[Réponse avec Requêtes Similaires]
 ```
 
 ## 🚀 Installation
@@ -95,15 +99,17 @@ graph TB
    GOOGLE_API_KEY=your_key_here
    
    # Configuration base
-   PINECONE_INDEX_NAME=nl2sql-index
+   PINECONE_INDEX_NAME=kpi-to-sql-gemini
    DEFAULT_PROVIDER=openai
+   EMBEDDING_MODEL=text-embedding-004
+   EMBEDDING_PROVIDER=google
    ```
 
 5. **Ajouter votre schéma**
    ```bash
    mkdir -p app/schemas
    # Copier votre fichier de schéma SQL/Markdown
-   cp your-schema.sql app/schemas/
+   cp your-schema.md app/schemas/
    ```
 
 6. **Lancer l'application**
@@ -142,11 +148,12 @@ curl -X POST "http://localhost:8000/api/v1/translate" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your_api_key" \
   -d '{
-    "query": "Liste des employés en CDI embauchés en 2023",
+    "query": "Quel est l'âge moyen de mes collaborateurs ?",
     "provider": "openai",
     "model": "gpt-4o",
     "explain": true,
-    "use_cache": true
+    "use_cache": true,
+    "include_similar_details": true
   }'
 ```
 
@@ -161,6 +168,8 @@ curl -X POST "http://localhost:8000/api/v1/translate" \
 | `explain` | boolean | `true` | Fournir une explication |
 | `use_cache` | boolean | `true` | Utiliser le cache Redis |
 | `include_similar_details` | boolean | `false` | Inclure les détails des vecteurs similaires |
+| `schema_path` | string | auto | Chemin du schéma (optionnel) |
+| `user_id_placeholder` | string | `"?"` | Placeholder pour l'ID utilisateur |
 
 ### 🎯 Exemples d'Utilisation
 
@@ -186,7 +195,7 @@ result = response.json()
 print(f"SQL: {result['sql']}")
 print(f"Explication: {result['explanation']}")
 
-# Requête avancée avec cache désactivé
+# Requête avancée avec détails des vecteurs similaires
 response = requests.post(url, headers=headers, json={
     "query": "Top 10 des salaires les plus élevés en 2023",
     "provider": "anthropic",
@@ -199,18 +208,26 @@ response = requests.post(url, headers=headers, json={
 </details>
 
 <details>
-<summary><b>Réponse Type</b></summary>
+<summary><b>Réponse Type avec Requêtes Similaires</b></summary>
 
 ```json
 {
-  "query": "Liste des employés en CDI embauchés en 2023",
-  "sql": "SELECT f.NOM, f.PRENOM, f.DEBUT_CONTRAT\nFROM FACTS f\nJOIN DEPOT d ON f.ID_NUMDEPOT = d.ID\nWHERE d.ID_USER = ?\n  AND f.NATURE_CONTRAT = '01'\n  AND YEAR(f.DEBUT_CONTRAT) = 2023\nORDER BY f.NOM; #DEPOT_d# #FACTS_f# #PERIODE#",
+  "query": "Quel est l'âge moyen de mes collaborateurs ?",
+  "sql": "SELECT ROUND(AVG(TRUNCATE(b.AGE, 0)), 2) AS Age_Moyen FROM depot a INNER JOIN facts b ON a.ID = b.ID_NUMDEPOT WHERE a.ID_USER = ? AND (b.FIN_CONTRAT = 'null' OR b.FIN_CONTRAT > a.datefin); #DEPOT_a# #FACTS_b# #PERIODE#",
   "valid": true,
-  "validation_message": "Requête SQL conforme au framework de sécurité",
-  "explanation": "Cette requête liste tous les employés en CDI embauchés en 2023.",
+  "validation_message": "Validation complète réussie",
+  "explanation": "Cette requête calcule l'âge moyen des collaborateurs encore en contrat.",
   "is_exact_match": false,
   "status": "success",
-  "processing_time": 1.84,
+  "processing_time": 8.979,
+  "similar_queries_details": [
+    {
+      "score": 0.724,
+      "texte_complet": "Age moyen par établissement",
+      "requete": "SELECT ROUND(AVG(b.AGE), 2) FROM depot a INNER JOIN facts b...",
+      "id": "gemini_load_1748246903_1381"
+    }
+  ],
   "framework_compliant": true,
   "from_cache": false,
   "provider": "openai",
@@ -228,6 +245,8 @@ response = requests.post(url, headers=headers, json={
 | `/api/v1/models` | GET | Modèles LLM disponibles |
 | `/api/v1/schemas` | GET | Schémas SQL disponibles |
 | `/api/v1/validate-framework` | POST | Validation framework d'une requête |
+| `/api/v1/prompts/templates` | GET | Templates de prompts Jinja2 |
+| `/api/v1/cache/stats` | GET | Statistiques du cache Redis |
 
 ## 🛡️ Architecture de Sécurité
 
@@ -236,26 +255,38 @@ response = requests.post(url, headers=headers, json={
 Chaque requête SQL générée **DOIT OBLIGATOIREMENT** respecter :
 
 1. **Filtre Utilisateur** : `WHERE [alias_depot].ID_USER = ?`
-2. **Table DEPOT** : Toujours présente pour les autorisations
-3. **Hashtags** : `#DEPOT_[alias]#` minimum + contextuels
+2. **Table DEPOT** : Toujours présente pour les autorisations multi-tenant
+3. **Hashtags** : `#DEPOT_[alias]#` minimum + contextuels (#PERIODE#, #FACTS_[alias]#)
+4. **Lecture Seule** : Uniquement SELECT (pas d'INSERT/UPDATE/DELETE)
 
 ### Exemple de Requête Conforme
 
 ```sql
-SELECT f.NOM, f.PRENOM, f.MNT_BRUT
-FROM FACTS f
-JOIN DEPOT d ON f.ID_NUMDEPOT = d.ID  
-WHERE d.ID_USER = ? 
-  AND f.NATURE_CONTRAT = '01'
-ORDER BY f.NOM; #DEPOT_d# #FACTS_f#
+SELECT b.NOM, b.PRENOM, ROUND(AVG(b.AGE), 2) AS AGE_MOYEN
+FROM depot a 
+INNER JOIN facts b ON a.ID = b.ID_NUMDEPOT  
+WHERE a.ID_USER = ? 
+  AND (b.FIN_CONTRAT = 'null' OR b.FIN_CONTRAT > a.datefin)
+  AND CONCAT(SUBSTRING(a.periode, 5, 4), SUBSTRING(a.periode, 3, 2)) IN (
+    SELECT MAX(CONCAT(SUBSTRING(w.periode, 5, 4), SUBSTRING(w.periode, 3, 2)))
+    FROM depot w
+    WHERE w.periode IN (#PERIODE#)
+    AND w.id_user = a.id_user
+  )
+GROUP BY b.NOM, b.PRENOM
+ORDER BY AGE_MOYEN DESC;
+#DEPOT_a# #FACTS_b# #PERIODE#
 ```
 
 ### Validation Multi-Niveaux
 
-1. ✅ **Validation Framework** - Respect des règles obligatoires
-2. ✅ **Validation Sécurité** - Détection d'opérations dangereuses
-3. ✅ **Validation Sémantique** - Cohérence avec la demande
-4. ✅ **Validation SQL** - Syntaxe et structure
+Le `ValidationService` effectue une validation complète :
+
+1. ✅ **Validation Syntaxique** - Structure SQL correcte
+2. ✅ **Validation Sécurité** - Pas d'opérations destructives
+3. ✅ **Validation Framework** - Respect des règles obligatoires
+4. ✅ **Validation Sémantique** - Correspondance avec la demande (LLM)
+5. ✅ **Correction Automatique** - Auto-fix si framework non conforme
 
 ## ⚙️ Configuration
 
@@ -281,13 +312,25 @@ LLM_TEMPERATURE=0.2
 LLM_TIMEOUT=30
 ```
 
-#### 🔍 Configuration Recherche
+#### 🔍 Configuration Embedding et Recherche
 
 ```env
-EXACT_MATCH_THRESHOLD=0.95    # Seuil correspondance exacte
-TOP_K_RESULTS=5               # Nombre résultats similaires
-SCHEMA_PATH=app/schemas/datasulting.sql
-EMBEDDING_MODEL=all-mpnet-base-v2
+# Embedding Google (nouveau)
+EMBEDDING_MODEL=text-embedding-004    # Google text-embedding-004
+EMBEDDING_PROVIDER=google             # google (par défaut)
+EMBEDDING_DIMENSIONS=768              # 768 pour text-embedding-004
+
+# Recherche vectorielle
+EXACT_MATCH_THRESHOLD=0.95            # Seuil correspondance exacte
+TOP_K_RESULTS=5                       # Nombre résultats similaires
+SCHEMA_PATH=app/schemas/datasulting.md
+```
+
+#### 🗄️ Configuration Pinecone
+
+```env
+PINECONE_INDEX_NAME=kpi-to-sql-gemini # Nom de votre index
+PINECONE_ENVIRONMENT=gcp-starter      # Environnement Pinecone
 ```
 
 #### 🗄️ Configuration Cache Redis
@@ -307,47 +350,63 @@ ALLOWED_HOSTS=["*","localhost","127.0.0.1"]
 DEBUG=false
 ```
 
-## 🔧 Architecture du Projet
+## 🔧 Architecture du Projet - Service Layer Pattern
 
 ```
 nl2sql-api/
 ├── app/                      # Code source principal
-│   ├── api/                  # Couche API
-│   │   ├── models.py         # Modèles Pydantic
-│   │   └── routes.py         # Endpoints FastAPI
-│   ├── core/                 # Logique métier
-│   │   ├── translator.py     # Traducteur principal
+│   ├── api/                  # Couche API (FastAPI)
+│   │   ├── models.py         # Modèles Pydantic avec SimilarQueryDetail
+│   │   └── routes.py         # Endpoints avec gestion d'erreurs centralisée
+│   ├── services/             # 🆕 COUCHE SERVICE LAYER
+│   │   ├── translation_service.py  # Service principal NL2SQL
+│   │   └── validation_service.py   # Service unifié de validation
+│   ├── core/                 # Couche métier
+│   │   ├── llm_factory.py    # Factory Pattern pour Multi-LLM
+│   │   ├── llm_providers.py  # Providers OpenAI/Anthropic/Google
 │   │   ├── llm_service.py    # Service LLM unifié
-│   │   ├── embedding.py      # Vectorisation
-│   │   └── vector_search.py  # Recherche Pinecone
+│   │   ├── embedding.py      # Google text-embedding-004
+│   │   ├── vector_search.py  # Pinecone avec gestion ScoredVector
+│   │   ├── http_client.py    # Client HTTP avec retry automatique
+│   │   └── exceptions.py     # Exceptions centralisées
+│   ├── prompts/              # 🆕 SYSTÈME DE PROMPTS JINJA2
+│   │   ├── prompt_manager.py # Gestionnaire central des prompts
+│   │   ├── sql_generation.j2 # Templates de génération SQL
+│   │   └── sql_validation.j2 # Templates de validation
 │   ├── utils/                # Utilitaires
-│   │   ├── cache.py          # Gestion cache Redis
-│   │   ├── validators.py     # Validations
-│   │   └── simple_framework_check.py # Framework obligatoire
+│   │   ├── cache.py          # Redis avec exceptions
+│   │   ├── cache_decorator.py # Décorateur @cache_service_method
+│   │   ├── schema_loader.py  # Chargement schémas
+│   │   └── validators.py     # Validations (deprecated → ValidationService)
 │   ├── schemas/              # Schémas SQL/MD
-│   ├── config.py             # Configuration
+│   │   └── datasulting.md    # Schéma RH avec exemples
+│   ├── config.py             # Configuration Pydantic
 │   ├── dependencies.py       # Dépendances FastAPI
 │   ├── security.py          # Middlewares sécurité
-│   └── main.py              # Point d'entrée
+│   └── main.py              # Point d'entrée avec Service Layer
 ├── docker/                  # Configuration Docker
-├── tests/                   # Tests
+├── tests/                   # Tests unitaires
 ├── .env.example            # Template configuration
 ├── requirements.txt        # Dépendances Python
 └── README.md
 ```
 
-## 🔄 Flux de Traitement
+## 🔄 Flux de Traduction Complet - Service Layer
 
-1. **Réception** : Validation requête utilisateur
-2. **Pertinence** : Vérification domaine RH avec LLM
-3. **Cache** : Recherche en cache Redis (si activé)
-4. **Vectorisation** : Conversion texte → vecteur
-5. **Recherche** : Top-K requêtes similaires (Pinecone)
-6. **Correspondance** : Vérification correspondance exacte
-7. **Génération** : Création SQL via LLM avec contexte
-8. **Validation** : Framework + sécurité + sémantique
-9. **Cache** : Stockage résultat (si succès)
-10. **Réponse** : Retour formaté avec métadonnées
+1. **Réception API** : Validation requête utilisateur (`routes.py`)
+2. **Service de Traduction** : `TranslationService.translate()` orchestrateur principal
+3. **Validation d'Entrée** : `ValidationService.validate_user_input()`
+4. **Pertinence RH** : Vérification via LLM Factory
+5. **Cache Check** : Décorateur `@cache_service_method`
+6. **Embedding** : Google `text-embedding-004` (768 dimensions)
+7. **Recherche Vectorielle** : Pinecone avec gestion `ScoredVector`
+8. **Correspondance Exacte** : Seuil configurable (0.95)
+9. **Génération LLM** : Via prompts Jinja2 avec contexte dynamique
+10. **Validation Complète** : `ValidationService.validate_complete()`
+11. **Correction Auto** : Framework compliance si nécessaire
+12. **Explication** : Génération via LLM avec prompts spécialisés
+13. **Cache Storage** : Stockage résultat si succès
+14. **Réponse Enrichie** : Avec `similar_queries_details` et métadonnées
 
 ## 🧪 Tests
 
@@ -366,22 +425,24 @@ pytest tests/ --cov=app --cov-report=html
 
 ### Endpoints de Monitoring
 
-- **Health Check** : `/api/v1/health`
-- **Status Services** : Pinecone, LLM, Redis, Embedding
+- **Health Check** : `/api/v1/health` - État de tous les services
+- **Service Debug** : `/api/v1/debug/service-status` (mode debug uniquement)
+- **Prompts Status** : `/api/v1/prompts/health` - État système Jinja2
 
-### Logs Structurés
+### Logs Structurés - Service Layer
 
 ```python
 # Exemple de log
-2024-01-15 10:30:45 - nl2sql.translator - INFO - Traduction terminée en 2.340s (statut: success, framework: conforme, provider: openai)
+2025-05-30 09:20:26 - app.services.translation_service - INFO - Traduction terminée en 9.524s (statut: success, framework: conforme, vecteurs similaires: 5)
 ```
 
 ### Métriques Disponibles
 
 - Temps de traitement par requête
-- Taux de cache hit/miss
+- Taux de cache hit/miss Redis
 - Distribution par provider LLM
 - Taux de conformité framework
+- Qualité des vecteurs similaires (scores)
 
 ## 🚀 Déploiement Production
 
@@ -395,7 +456,10 @@ services:
     environment:
       - PINECONE_API_KEY=${PINECONE_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - REDIS_URL=redis://redis:6379/0
+      - EMBEDDING_MODEL=text-embedding-004
+      - EMBEDDING_PROVIDER=google
     depends_on:
       - redis
   
@@ -411,6 +475,9 @@ services:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf
+
+volumes:
+  redis-data:
 ```
 
 ### Variables pour Production
@@ -421,6 +488,8 @@ CACHE_ENABLED=true
 METRICS_ENABLED=true
 API_KEY=generate_strong_secret
 ALLOWED_HOSTS=["your-domain.com","api.your-domain.com"]
+EMBEDDING_MODEL=text-embedding-004
+EMBEDDING_PROVIDER=google
 ```
 
 ## ❓ FAQ
@@ -428,28 +497,54 @@ ALLOWED_HOSTS=["your-domain.com","api.your-domain.com"]
 <details>
 <summary><b>Comment l'API évite-t-elle la pollution de ma base vectorielle ?</b></summary>
 
-L'API ne stocke **JAMAIS** automatiquement de nouvelles requêtes dans Pinecone. Elle utilise uniquement la base existante pour la recherche sémantique. Le stockage peut être activé manuellement si nécessaire.
+L'API ne stocke **JAMAIS** automatiquement de nouvelles requêtes dans Pinecone. Elle utilise uniquement la base existante pour la recherche sémantique. Le stockage peut être activé manuellement si nécessaire via le paramètre `store_result=True`.
 
 </details>
 
 <details>
-<summary><b>Quels sont les providers LLM supportés ?</b></summary>
+<summary><b>Quels sont les providers LLM supportés et leurs modèles ?</b></summary>
 
-- **OpenAI** : GPT-4o, GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
-- **Anthropic** : Claude 3 Opus, Claude 3 Sonnet, Claude 3 Haiku  
+- **OpenAI** : GPT-4o, GPT-4o Mini, GPT-4 Turbo, GPT-4, GPT-3.5 Turbo
+- **Anthropic** : Claude 3 Opus, Claude 3 Sonnet, Claude 3 Haiku, Claude 3.5 Sonnet
 - **Google** : Gemini Pro, Gemini 1.5 Pro, Gemini 1.5 Flash
 
 </details>
 
 <details>
-<summary><b>Comment fonctionne le framework de sécurité ?</b></summary>
+<summary><b>Comment fonctionne le nouveau système d'embedding Google ?</b></summary>
 
-Chaque requête générée DOIT inclure :
-1. Filtre `WHERE depot.ID_USER = ?` pour la sécurité
-2. Table DEPOT pour les autorisations  
-3. Hashtags appropriés pour la gestion des permissions
+L'API utilise maintenant **Google text-embedding-004** (768 dimensions) au lieu de Sentence Transformers. Cela offre :
+- Meilleure qualité de vectorisation
+- Pas de modèle local à télécharger
+- Compatibilité avec l'écosystème Google AI
 
-Si une requête n'est pas conforme, l'API tente une correction automatique.
+</details>
+
+<details>
+<summary><b>Que sont les "similar_queries_details" dans la réponse ?</b></summary>
+
+C'est une nouvelle fonctionnalité qui retourne les détails complets des 5 vecteurs les plus similaires trouvés dans Pinecone :
+```json
+"similar_queries_details": [
+  {
+    "score": 0.724,
+    "texte_complet": "Age moyen par établissement", 
+    "requete": "SELECT ROUND(AVG(b.AGE), 2)...",
+    "id": "gemini_load_1748246903_1381"
+  }
+]
+```
+
+</details>
+
+<details>
+<summary><b>Comment fonctionne le système de prompts Jinja2 ?</b></summary>
+
+Les prompts sont maintenant modulaires et personnalisables :
+1. **Templates** : `sql_generation.j2`, `sql_validation.j2`
+2. **Contexte dynamique** : période, département, mode strict
+3. **Macros réutilisables** : `system_message()`, `generate_sql_prompt()`
+4. **Fallback automatique** : si Jinja2 échoue, utilise prompts par défaut
 
 </details>
 
@@ -460,6 +555,7 @@ Non, Redis est optionnel. Sans Redis :
 - Les performances seront légèrement impactées
 - Chaque requête sera retraitée complètement
 - La limitation de débit utilisera une mémoire interne
+- Les logs indiqueront "Redis non disponible, le cache sera désactivé"
 </details>
 
 <details>
@@ -469,9 +565,37 @@ Non, Redis est optionnel. Sans Redis :
 2. Modifiez `SCHEMA_PATH` dans votre `.env`
 3. Redémarrez l'application
 
-Le schéma peut être en SQL standard ou en Markdown documenté.
+Le schéma peut être en SQL standard ou en Markdown documenté avec exemples.
 
 </details>
+
+## 🆕 Nouveautés v2.0.0
+
+### **Architecture Service Layer**
+- ✅ `TranslationService` : Orchestrateur principal
+- ✅ `ValidationService` : Validation unifiée 
+- ✅ Factory Pattern pour Multi-LLM
+- ✅ Exceptions centralisées
+
+### **Système de Prompts Jinja2**
+- ✅ Templates modulaires (`sql_generation.j2`, `sql_validation.j2`)
+- ✅ Contexte dynamique (période, département, mode strict)
+- ✅ Fallback automatique vers prompts par défaut
+
+### **Embedding Google**
+- ✅ `text-embedding-004` (768 dimensions)
+- ✅ Plus de dépendance Sentence Transformers
+- ✅ Meilleure qualité de vectorisation
+
+### **Recherche Vectorielle Améliorée**
+- ✅ Support objets `ScoredVector` de Pinecone
+- ✅ `similar_queries_details` avec score, texte complet, requête SQL et ID
+- ✅ Normalisation automatique des métadonnées
+
+### **Cache et Performance**
+- ✅ Décorateur `@cache_service_method` pour services
+- ✅ Contrôle granulaire par requête (`use_cache`)
+- ✅ Métriques de performance détaillées
 
 ## 🤝 Contribution
 
@@ -490,7 +614,7 @@ Ce projet est sous licence MIT. Voir [LICENSE](LICENSE) pour plus de détails.
 ---
 
 <div align="center">
-<p>✨ <strong>NL2SQL API - Transformez vos questions en requêtes SQL intelligentes</strong> ✨</p>
+<p>✨ <strong>NL2SQL API v2.0.0 - Architecture Service Layer avec Prompts Jinja2</strong> ✨</p>
 <p>Développé avec ❤️ par <a href="https://datasulting.com">Datasulting</a></p>
-<p><em>Version 2.0.0 - Support Multi-LLM & Recherche Vectorielle Avancée</em></p>
+<p><em>Version 2.0.0 - Service Layer + Multi-LLM + Prompts Modulaires + Google Embedding</em></p>
 </div>
