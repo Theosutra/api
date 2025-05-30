@@ -18,6 +18,36 @@ _pc = None
 _index = None
 
 
+def _normalize_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalise les métadonnées pour compatibilité avec différents formats.
+    
+    Args:
+        metadata: Métadonnées brutes de Pinecone
+        
+    Returns:
+        Métadonnées normalisées au format attendu
+    """
+    normalized = metadata.copy()
+    
+    # Conversion requetes -> requete (support format existant)
+    if 'requetes' in normalized and 'requete' not in normalized:
+        normalized['requete'] = normalized['requetes']
+    
+    # Conversion nom -> texte_complet (support format existant)
+    if 'nom' in normalized and 'texte_complet' not in normalized:
+        normalized['texte_complet'] = normalized['nom']
+    
+    # S'assurer que les champs obligatoires existent
+    if 'requete' not in normalized:
+        normalized['requete'] = ''
+    
+    if 'texte_complet' not in normalized:
+        normalized['texte_complet'] = normalized.get('description', '')[:100] + '...' if normalized.get('description') else ''
+    
+    return normalized
+
+
 def _init_pinecone():
     """
     Initialise le client Pinecone et l'index de manière paresseuse.
@@ -129,17 +159,49 @@ def _find_similar_queries_sync(query_vector: List[float], top_k: int) -> List[Di
         if not isinstance(matches, list):
             raise VectorSearchError("Format de réponse Pinecone invalide: 'matches' n'est pas une liste", settings.PINECONE_INDEX_NAME)
         
-        # Filtrer les résultats avec scores valides
+        # Filtrer les résultats avec scores valides ET normaliser les métadonnées
         valid_matches = []
         for match in matches:
-            if isinstance(match, dict) and 'score' in match:
-                score = match.get('score', 0)
-                if isinstance(score, (int, float)) and not (isinstance(score, float) and (score != score or score == float('inf') or score == float('-inf'))):
-                    valid_matches.append(match)
+            # DEBUG: Afficher la structure complète pour diagnostic
+            logger.debug(f"Structure du match reçu: {match}")
+            
+            if isinstance(match, dict):
+                # Essayer d'extraire le score de différentes façons
+                score = None
+                if 'score' in match:
+                    score = match['score']
+                elif hasattr(match, 'score'):
+                    score = match.score
+                else:
+                    # Certaines versions de Pinecone utilisent des attributs différents
+                    logger.warning(f"Pas de score trouvé dans match: {list(match.keys())}")
+                    continue
+                
+                # Validation du score
+                if score is not None and isinstance(score, (int, float)) and not (isinstance(score, float) and (score != score or score == float('inf') or score == float('-inf'))):
+                    # ✅ NORMALISER LES MÉTADONNÉES POUR COMPATIBILITÉ
+                    metadata = match.get('metadata', {})
+                    if not metadata and hasattr(match, 'metadata'):
+                        metadata = match.metadata
+                    
+                    normalized_metadata = _normalize_metadata(metadata)
+                    
+                    # Vérifier que la requête SQL n'est pas vide après normalisation
+                    if normalized_metadata.get('requete', '').strip():
+                        # Reconstruire le match avec la structure attendue
+                        normalized_match = {
+                            'score': score,
+                            'metadata': normalized_metadata,
+                            'id': match.get('id', '') or getattr(match, 'id', '')
+                        }
+                        valid_matches.append(normalized_match)
+                        logger.debug(f"Match valide: score={score:.3f}, texte='{normalized_metadata.get('texte_complet', '')[:50]}...'")
+                    else:
+                        logger.warning(f"Match ignoré: requête SQL vide (score={score:.3f})")
                 else:
                     logger.warning(f"Score invalide ignoré: {score}")
             else:
-                logger.warning(f"Match invalide ignoré: {match}")
+                logger.warning(f"Match invalide ignoré: type={type(match)}, contenu={match}")
         
         logger.debug(f"Recherche Pinecone: {len(valid_matches)} résultats valides sur {len(matches)} totaux")
         return valid_matches
@@ -241,7 +303,8 @@ async def check_exact_match(similar_queries: List[Dict[str, Any]], threshold: fl
                 logger.warning("Métadonnées invalides dans top_match")
                 return None
             
-            sql_query = metadata.get('requete')
+            # ✅ SUPPORT DES DEUX FORMATS : 'requete' ET 'requetes'
+            sql_query = metadata.get('requete') or metadata.get('requetes')
             if sql_query and isinstance(sql_query, str) and len(sql_query.strip()) > 0:
                 logger.info(f"Correspondance exacte trouvée avec un score de {score:.4f}")
                 return sql_query.strip()
@@ -301,7 +364,7 @@ async def store_query(
     try:
         index = _init_pinecone()
         
-        # Préparer les métadonnées
+        # Préparer les métadonnées avec format compatible
         if metadata is None:
             metadata = {}
         
@@ -309,9 +372,12 @@ async def store_query(
             logger.warning("Métadonnées invalides, utilisation d'un dictionnaire vide")
             metadata = {}
         
+        # ✅ STOCKER DANS LES DEUX FORMATS POUR COMPATIBILITÉ
         metadata.update({
             'texte_complet': query_text.strip(),
-            'requete': sql_query.strip()
+            'requete': sql_query.strip(),
+            'nom': query_text.strip(),  # Format existant
+            'requetes': sql_query.strip()  # Format existant
         })
         
         # Générer un ID unique (hash du texte de la requête)
